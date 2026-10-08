@@ -45,6 +45,7 @@ export function RowMenu(props: {
   theme: PluginTheme;
   folders: ReadyFolders;
   onClose(): void;
+  onArchived?(workspaceId: string): void;
 }) {
   const { ws, meta, theme, folders, onClose } = props;
   const paseo = usePaseo();
@@ -173,7 +174,14 @@ export function RowMenu(props: {
     entries.push(item("move", "FolderInput", "Move to folder", () => setPage("move"), chevron));
     entries.push(
       item("archive", "Archive", "Archive", () =>
-        void act(() => paseo.workspaces.archive(ws.id), "Archived", "Could not archive."),
+        void act(
+          async () => {
+            await paseo.workspaces.archive(ws.id);
+            props.onArchived?.(ws.id);
+          },
+          "Archived",
+          "Could not archive.",
+        ),
       ),
     );
     rows = entries.length;

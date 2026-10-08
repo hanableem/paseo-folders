@@ -12,10 +12,13 @@ import {
   type ListedWorkspace,
   mergeSuggestions,
   readSuggestionsRpc,
+  withoutAutoTitle,
 } from "../shared/model";
 
 const PARENT_AGENT_LABEL = "paseo.parent-agent-id";
 const IMPORT_MS = 10 * 60_000;
+/** A workspace made from a folder stops waiting for a title after a day. */
+const AUTO_TITLE_MS = 24 * 60 * 60_000;
 const PAGE_SIZE = 200;
 const MAX_PAGES = 50;
 
@@ -33,9 +36,13 @@ export function debugLog(event: string, data: Record<string, string | number | b
 export type PaseoApi = ReturnType<typeof usePaseo>;
 
 export interface WorkspaceMeta {
+  /** The workspace's own title; empty while it has none. */
   title: string;
   directory: string;
   branch: string;
+  /** Root of the project the workspace belongs to. */
+  projectRoot: string;
+  projectId: string;
 }
 
 export interface Directory {
@@ -102,6 +109,8 @@ async function listWorkspaceMeta(paseo: PaseoApi): Promise<Map<string, Workspace
           title: ws.title?.trim() ?? "",
           directory: ws.workspaceDirectory ?? ws.projectRootPath ?? "",
           branch: ws.gitRuntime?.currentBranch ?? "",
+          projectRoot: ws.projectRootPath ?? ws.workspaceDirectory ?? "",
+          projectId: ws.projectId ?? "",
         });
       }
       const next = result.pageInfo?.nextCursor;
@@ -364,4 +373,54 @@ export function useAutoImport(folders: FoldersState, workspaces: readonly Listed
     const timer = setInterval(() => void run(), IMPORT_MS);
     return () => clearInterval(timer);
   }, [ready]);
+}
+
+/**
+ * Paseo names a workspace after the prompt it was created with. A workspace made
+ * from a folder starts empty, so once its first conversation has answered, it
+ * takes that conversation's title. Workspaces that already have a title, or
+ * that the user renamed, are left alone.
+ */
+export function useAutoTitle(
+  folders: FoldersState,
+  workspaces: readonly ListedWorkspace[],
+  meta: ReadonlyMap<string, WorkspaceMeta>,
+): void {
+  const paseo = usePaseo();
+  const busy = useRef(false);
+  useEffect(() => {
+    if (folders.status !== "ready" || busy.current) return;
+    const waiting = Object.entries(folders.doc.autoTitle);
+    if (waiting.length === 0) return;
+    const now = Date.now();
+    const settled: string[] = [];
+    const titles: Array<[string, string]> = [];
+    for (const [id, since] of waiting) {
+      const own = meta.get(id)?.title;
+      if (own || !(now - Date.parse(since) < AUTO_TITLE_MS)) {
+        settled.push(id);
+        continue;
+      }
+      const agents = workspaces.find((ws) => ws.id === id)?.agents ?? [];
+      const first = agents[agents.length - 1];
+      // Wait for fresh metadata and for the first answer, which settles the conversation's title.
+      if (!meta.has(id) || !first || first.bucket === "running" || first.title === "Untitled") continue;
+      titles.push([id, first.title]);
+      settled.push(id);
+    }
+    if (settled.length === 0) return;
+    busy.current = true;
+    void (async () => {
+      for (const [id, title] of titles) {
+        try {
+          await paseo.workspaces.ref(id).setTitle(title);
+        } catch {
+          // Left untitled; it can still be renamed from the menu.
+        }
+      }
+      await folders.update((doc) => withoutAutoTitle(doc, settled));
+    })().finally(() => {
+      busy.current = false;
+    });
+  }, [folders, workspaces, meta, paseo]);
 }

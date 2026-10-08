@@ -9,17 +9,21 @@ import {
   FoldersDocumentSchema,
   groupWorkspaces,
   type ListedAgent,
+  markAutoTitle,
   matchesWorkspace,
   mergeSuggestions,
+  mostCommon,
   moveAgent,
   moveFolder,
   moveWorkspace,
+  parseRoute,
   renameFolder,
   SuggestionsSchema,
   agentBucket,
   resumeCommand,
   UNSORTED_ID,
   workspaceBucket,
+  withoutAutoTitle,
   workspaceFolderOf,
 } from "../shared/model.ts";
 
@@ -184,4 +188,27 @@ test("resume commands match Paseo's tab menu", () => {
   assert.equal(resumeCommand("codex/gpt", "t1"), "codex resume t1");
   assert.equal(resumeCommand("grok", "x"), null);
   assert.equal(resumeCommand("claude", ""), null);
+});
+
+test("routes name the workspace, agent or plugin screen Paseo shows", () => {
+  assert.deepEqual(parseRoute("/h/srv/workspace/w%3A1"), { kind: "workspace", id: "w:1" });
+  assert.deepEqual(parseRoute("/h/srv/agent/a1"), { kind: "agent", id: "a1" });
+  assert.deepEqual(parseRoute("/h/srv/plugin/paseo-folders/screen/open"), { kind: "plugin", pluginId: "paseo-folders" });
+  assert.equal(parseRoute("/new"), null);
+  assert.equal(parseRoute("/h/srv"), null);
+  assert.deepEqual(parseRoute("/h/srv/workspace/%E0%A4%A"), { kind: "workspace", id: "%E0%A4%A" });
+});
+
+test("the usual project is the most common one, first seen on ties", () => {
+  assert.equal(mostCommon(["/a", "/b", "/b", ""]), "/b");
+  assert.equal(mostCommon(["/a", "/b"]), "/a");
+  assert.equal(mostCommon(["", ""]), null);
+});
+
+test("workspaces made from a folder wait for a title until settled", () => {
+  const doc = markAutoTitle(empty(), "w1", "2026-10-08T00:00:00Z");
+  assert.deepEqual(doc.autoTitle, { w1: "2026-10-08T00:00:00Z" });
+  assert.deepEqual(withoutAutoTitle(doc, ["w1"]).autoTitle, {});
+  assert.equal(withoutAutoTitle(doc, ["w2"]), doc);
+  assert.deepEqual(FoldersDocumentSchema.parse({ folders: [] }).autoTitle, {});
 });

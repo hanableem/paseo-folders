@@ -7,6 +7,13 @@ declare const document:
       removeEventListener(type: string, listener: (event: unknown) => void, capture?: boolean): void;
     }
   | undefined;
+declare const window: { location?: { pathname?: string } } | undefined;
+
+/** The address Paseo's router shows, on the web and in the desktop app; null on native platforms. */
+export function currentPathname(): string | null {
+  if (Platform.OS !== "web" || typeof window === "undefined") return null;
+  return window.location?.pathname ?? null;
+}
 
 /**
  * On the web, calls `onOutside` for any press, right-click or Escape outside the

@@ -33,6 +33,11 @@ export const FoldersDocumentSchema = z.object({
   suggestionsPath: z.string().default(""),
   /** ISO time of the last successful import, for display only. */
   lastImportAt: z.string().default(""),
+  /**
+   * Workspace ID -> ISO time, for workspaces made from a folder. They start
+   * untitled and take their first conversation's title.
+   */
+  autoTitle: z.record(z.string(), z.string()).default({}),
 });
 export type FoldersDocument = z.infer<typeof FoldersDocumentSchema>;
 
@@ -197,6 +202,49 @@ export function workspaceFolderOf(doc: FoldersDocument, ws: Pick<ListedWorkspace
     }
   }
   return best ?? named?.id ?? UNSORTED_ID;
+}
+
+/** Marks a workspace made from a folder, so it takes its first conversation's title. */
+export function markAutoTitle(doc: FoldersDocument, workspaceId: string, at: string): FoldersDocument {
+  return { ...doc, autoTitle: { ...doc.autoTitle, [workspaceId]: at } };
+}
+
+export function withoutAutoTitle(doc: FoldersDocument, workspaceIds: readonly string[]): FoldersDocument {
+  if (!workspaceIds.some((id) => id in doc.autoTitle)) return doc;
+  const autoTitle = { ...doc.autoTitle };
+  for (const id of workspaceIds) delete autoTitle[id];
+  return { ...doc, autoTitle };
+}
+
+/** The most frequent non-empty value; ties go to the one seen first. */
+export function mostCommon(values: readonly string[]): string | null {
+  const counts = new Map<string, number>();
+  let best: string | null = null;
+  for (const v of values) {
+    if (!v) continue;
+    const n = (counts.get(v) ?? 0) + 1;
+    counts.set(v, n);
+    if (best === null || n > (counts.get(best) ?? 0)) best = v;
+  }
+  return best;
+}
+
+export type PaseoRoute = { kind: "workspace" | "agent"; id: string } | { kind: "plugin"; pluginId: string };
+
+/**
+ * What a Paseo address shows: /h/<host>/workspace/<id>, /h/<host>/agent/<id> or a
+ * plugin screen at /h/<host>/plugin/<plugin>/...; null for anything else.
+ */
+export function parseRoute(path: string): PaseoRoute | null {
+  const m = /^\/h\/[^/]+\/(workspace|agent|plugin)\/([^/?#]+)/.exec(path);
+  if (!m) return null;
+  let id = m[2];
+  try {
+    id = decodeURIComponent(id);
+  } catch {
+    // A malformed escape keeps the raw segment.
+  }
+  return m[1] === "plugin" ? { kind: "plugin", pluginId: id } : { kind: m[1] as "workspace" | "agent", id };
 }
 
 export function moveWorkspace(doc: FoldersDocument, workspaceId: string, folderId: string): FoldersDocument {

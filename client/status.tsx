@@ -113,7 +113,7 @@ export function mostUrgent(workspaces: readonly ListedWorkspace[]): StatusBucket
  * The icon at the start of a workspace row. Running shows Paseo's ring; needing
  * input shows an alert. Otherwise a single conversation shows its provider's mark
  * and a shared workspace shows a stack icon, with a coloured dot for unread or
- * failed results.
+ * failed results. A workspace with no conversation yet shows an empty bubble.
  */
 export function WorkspaceIcon({ workspace, theme }: { workspace: ListedWorkspace; theme: PluginTheme }) {
   const bucket = workspaceBucket(workspace);
@@ -129,6 +129,13 @@ export function WorkspaceIcon({ workspace, theme }: { workspace: ListedWorkspace
     return (
       <View style={frame}>
         <Icon name="CircleAlert" size={12} color={statusColors(theme).warning} />
+      </View>
+    );
+  }
+  if (workspace.agents.length === 0) {
+    return (
+      <View style={frame}>
+        <Icon name="MessageSquareDashed" size={14} color={theme.colors.foregroundMuted} />
       </View>
     );
   }
