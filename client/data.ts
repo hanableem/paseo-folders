@@ -2,6 +2,7 @@ import type { PluginClientContext, PluginOpenScreenInput } from "@getpaseo/plugi
 import { usePaseo, useRpc, useSettings } from "@getpaseo/plugin/client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  agentBucket,
   applyForcedToWorkspaces,
   debugLogRpc,
   type FoldersDocument,
@@ -61,8 +62,13 @@ export async function fetchDirectory(paseo: PaseoApi): Promise<Directory> {
         workspaceId: agent.workspaceId ?? "",
         workspaceName: project.workspaceName ?? "",
         archived: Boolean(agent.archivedAt),
-        running: agent.status === "running",
-        attention: Boolean(agent.requiresAttention),
+        bucket: agentBucket({
+          status: agent.status,
+          requiresAttention: agent.requiresAttention,
+          attentionReason: agent.attentionReason,
+          pendingPermissionCount: agent.pendingPermissions?.length ?? 0,
+        }),
+        sessionId: agent.persistence?.sessionId ?? "",
         activityAt: agent.lastUserMessageAt ?? agent.updatedAt,
       });
     }
@@ -113,6 +119,9 @@ type AgentPayload = {
   archivedAt?: string | null;
   status: string;
   requiresAttention?: boolean;
+  attentionReason?: string | null;
+  pendingPermissions?: readonly unknown[];
+  persistence?: { sessionId?: string } | null;
   lastUserMessageAt: string | null;
   updatedAt: string;
   labels?: Record<string, string>;
@@ -126,8 +135,13 @@ function toListed(agent: AgentPayload, workspaceName: string): ListedAgent {
     workspaceId: agent.workspaceId ?? "",
     workspaceName,
     archived: Boolean(agent.archivedAt),
-    running: agent.status === "running",
-    attention: Boolean(agent.requiresAttention),
+    bucket: agentBucket({
+      status: agent.status,
+      requiresAttention: agent.requiresAttention,
+      attentionReason: agent.attentionReason,
+      pendingPermissionCount: agent.pendingPermissions?.length ?? 0,
+    }),
+    sessionId: agent.persistence?.sessionId ?? "",
     activityAt: agent.lastUserMessageAt ?? agent.updatedAt,
   };
 }

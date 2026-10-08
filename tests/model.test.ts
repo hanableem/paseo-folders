@@ -16,7 +16,10 @@ import {
   moveWorkspace,
   renameFolder,
   SuggestionsSchema,
+  agentBucket,
+  resumeCommand,
   UNSORTED_ID,
+  workspaceBucket,
   workspaceFolderOf,
 } from "../shared/model.ts";
 
@@ -28,8 +31,8 @@ const agent = (id: string, workspaceId: string, activityAt = "2026-01-01T00:00:0
   workspaceId,
   workspaceName: "",
   archived: false,
-  running: false,
-  attention: false,
+  bucket: "done",
+  sessionId: "",
   activityAt,
 });
 const withFolders = (...names: string[]) => names.reduce((d, n) => addFolder(d, n), empty());
@@ -164,4 +167,21 @@ test("counts use workspaces, and search covers titles of the conversations insid
 test("suggestions files must declare version 1", () => {
   assert.ok(!SuggestionsSchema.safeParse({ folders: [] }).success);
   assert.ok(SuggestionsSchema.safeParse({ version: 1 }).success);
+});
+
+test("status buckets follow Paseo's order: permission, error, running, unread, done", () => {
+  assert.equal(agentBucket({ status: "running", pendingPermissionCount: 1 }), "needs_input");
+  assert.equal(agentBucket({ status: "idle", attentionReason: "error", requiresAttention: true }), "failed");
+  assert.equal(agentBucket({ status: "initializing" }), "running");
+  assert.equal(agentBucket({ status: "idle", requiresAttention: true, attentionReason: "finished" }), "attention");
+  assert.equal(agentBucket({ status: "idle" }), "done");
+  const ws = { agents: [{ bucket: "attention" as const }, { bucket: "running" as const }, { bucket: "done" as const }] };
+  assert.equal(workspaceBucket(ws), "running");
+});
+
+test("resume commands match Paseo's tab menu", () => {
+  assert.equal(resumeCommand("claude", "abc"), "claude --resume abc");
+  assert.equal(resumeCommand("codex/gpt", "t1"), "codex resume t1");
+  assert.equal(resumeCommand("grok", "x"), null);
+  assert.equal(resumeCommand("claude", ""), null);
 });

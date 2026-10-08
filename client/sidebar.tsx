@@ -3,14 +3,23 @@ import type { PluginSidebarItemProps } from "@getpaseo/plugin/client";
 import { Icon, useToast } from "@getpaseo/plugin/client/react-native";
 import { SidebarRow } from "@getpaseo/plugin/client/ui";
 import { Fragment, useMemo, useRef, useState } from "react";
-import { PanResponder, Platform, Pressable, type PressableStateCallbackType, Text, View } from "react-native";
-import { type ListedWorkspace, moveWorkspace, UNSORTED_ID, workspaceFolderOf } from "../shared/model";
+import {
+  type GestureResponderEvent,
+  PanResponder,
+  Platform,
+  Pressable,
+  type PressableStateCallbackType,
+  Text,
+  View,
+} from "react-native";
+import { type ListedWorkspace, moveWorkspace, UNSORTED_ID, workspaceBucket, workspaceFolderOf } from "../shared/model";
 import { debugLog, useAutoImport, useDirectory, useFolders } from "./data";
-import { StatusIcon } from "./ui";
+import { RowMenu } from "./menu";
+import { StatusRing, WorkspaceIcon } from "./status";
 
 /** Rows listed under an open folder; the rest are one press away. */
 const MAX_ROWS_PER_FOLDER = 8;
-/** Mouse drags start after this many pixels; touch drags start after a long press. */
+/** Mouse drags start after this many pixels. */
 const MOUSE_DRAG_SLOP = 6;
 
 interface Rect {
@@ -22,9 +31,9 @@ interface Rect {
 
 /**
  * Folders of workspaces, like Paseo's own list but grouped. One folder is open
- * at a time so every folder stays on screen as a drop target. Drag a workspace
- * onto a folder to move it (long-press first on touch screens), or long-press
- * it and tap a folder.
+ * at a time so every folder stays on screen as a drop target. With a mouse, drag
+ * a workspace onto a folder; right-click or long-press it for the menu, which
+ * also moves it.
  */
 export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginSidebarItemProps) {
   const toast = useToast();
@@ -33,9 +42,9 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
   useAutoImport(folders, workspaces, !loading);
   const [expanded, setExpanded] = useState(true);
   const [openFolder, setOpenFolder] = useState<string | null>(null);
-  const [moving, setMoving] = useState<ListedWorkspace | null>(null);
   const [drag, setDrag] = useState<{ ws: ListedWorkspace; y: number } | null>(null);
   const [hoverId, setHoverId] = useState<string | null>(null);
+  const [menu, setMenu] = useState<{ ws: ListedWorkspace; top: number } | null>(null);
   const container = useRef<View | null>(null);
   const containerTop = useRef(0);
   const folderViews = useRef(new Map<string, View | null>());
@@ -62,6 +71,9 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
   // With nothing chosen, show Unsorted open so new workspaces are easy to file.
   const shownFolder = openFolder ?? (unsortedCount > 0 ? UNSORTED_ID : null);
 
+  const openWorkspace = (ws: ListedWorkspace) =>
+    openScreen({ screenId: "open", params: { workspaceId: ws.id, name: ws.title } });
+
   async function moveTo(ws: ListedWorkspace, folderId: string, folderName: string) {
     if (!ready || workspaceFolderOf(ready.doc, ws) === folderId) return;
     const ok = await ready.update((d) => moveWorkspace(d, ws.id, folderId));
@@ -80,9 +92,17 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
     return null;
   };
 
+  const openMenu = (ws: ListedWorkspace, pageY: number) => {
+    const place = (top: number) => setMenu({ ws, top: Math.max(0, pageY - top - 8) });
+    if (container.current) container.current.measureInWindow((_x, y) => place(y));
+    else place(0);
+    debugLog("menu", { platform: Platform.OS });
+  };
+
   const dragApi: DragApi = {
     start(ws, x, y) {
       dragging.current = ws;
+      setMenu(null);
       folderRects.current.clear();
       for (const [id, view] of folderViews.current) {
         view?.measureInWindow((rx, ry, width, height) => folderRects.current.set(id, { x: rx, y: ry, width, height }));
@@ -104,7 +124,6 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
       debugLog("drag-end", { hit: target !== null, x, y });
       setDrag(null);
       setHoverId(null);
-      setMoving(null);
       if (ws && target) void moveTo(ws, target, nameOf(target));
     },
   };
@@ -129,26 +148,17 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
   );
   if (!ready || !expanded) return header;
 
-  const picking = moving ?? drag?.ws ?? null;
   const groups = [{ id: UNSORTED_ID, name: "Unsorted" }, ...ready.doc.folders];
   return (
     <View ref={container} collapsable={false}>
       {header}
-      {moving && !drag ? (
-        <SidebarRow
-          id="moving"
-          icon="X"
-          label={`Tap a folder for “${moving.title}”, or tap here to cancel`}
-          onPress={() => setMoving(null)}
-        />
-      ) : null}
       {groups.map((folder) => {
         const list = byFolder.get(folder.id) ?? [];
         const isUnsorted = folder.id === UNSORTED_ID;
-        if (isUnsorted && list.length === 0 && !picking) return null;
+        if (isUnsorted && list.length === 0 && !drag) return null;
         const open = shownFolder === folder.id;
         const shown = open ? list.slice(0, MAX_ROWS_PER_FOLDER) : [];
-        const running = list.some((ws) => ws.agents.some((a) => a.running));
+        const running = list.some((ws) => workspaceBucket(ws) === "running");
         return (
           <Fragment key={folder.id}>
             <View
@@ -164,21 +174,15 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
             >
               <SidebarRow
                 id={`folder-${folder.id}`}
-                icon={picking ? "FolderInput" : isUnsorted ? "Inbox" : open ? "FolderOpen" : "Folder"}
+                icon={drag ? "FolderInput" : isUnsorted ? "Inbox" : open ? "FolderOpen" : "Folder"}
                 label={folder.name}
                 active={activeScreen === "folder" && currentScreen?.params.id === folder.id}
-                onPress={() => {
-                  if (moving) {
-                    const ws = moving;
-                    setMoving(null);
-                    void moveTo(ws, folder.id, folder.name);
-                  } else setOpenFolder(open ? "" : folder.id);
-                }}
+                onPress={() => setOpenFolder(open ? "" : folder.id)}
                 trailing={
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                    {running && !open ? <StatusIcon running attention={false} icon="Folder" theme={theme} size={12} /> : null}
+                    {running && !open ? <StatusRing theme={theme} /> : null}
                     <Text style={muted}>{list.length}</Text>
-                    {picking
+                    {drag
                       ? null
                       : chevron(open, open ? `Collapse ${folder.name}` : `Expand ${folder.name}`, () =>
                           setOpenFolder(open ? "" : folder.id),
@@ -193,13 +197,10 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
                 ws={ws}
                 theme={theme}
                 active={openWorkspaceId === ws.id}
-                lifted={picking?.id === ws.id}
+                lifted={drag?.ws.id === ws.id}
                 dragRef={dragRef}
-                onOpen={() => openScreen({ screenId: "open", params: { workspaceId: ws.id, name: ws.title } })}
-                onLongPress={() => {
-                  debugLog("long-press", { platform: Platform.OS });
-                  setMoving(ws);
-                }}
+                onOpen={() => openWorkspace(ws)}
+                onMenu={(pageY) => openMenu(ws, pageY)}
               />
             ))}
             {open && list.length > shown.length ? (
@@ -235,6 +236,16 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
           </Text>
         </View>
       ) : null}
+      {menu ? (
+        <RowMenu
+          ws={menu.ws}
+          top={menu.top}
+          theme={theme}
+          folders={ready}
+          onOpen={() => openWorkspace(menu.ws)}
+          onClose={() => setMenu(null)}
+        />
+      ) : null}
     </View>
   );
 }
@@ -245,7 +256,12 @@ interface DragApi {
   end(x: number | null, y: number | null): void;
 }
 
-/** A workspace row: status like Paseo's own list, its title, and how many conversations it holds. */
+function pageYOf(event: unknown): number {
+  const e = event as { nativeEvent?: { pageY?: number; clientY?: number }; pageY?: number; clientY?: number };
+  return e.nativeEvent?.pageY ?? e.nativeEvent?.clientY ?? e.pageY ?? e.clientY ?? 0;
+}
+
+/** A workspace row with Paseo-style status, its title, and how many conversations it holds. */
 function WorkspaceItem(props: {
   ws: ListedWorkspace;
   theme: PluginTheme;
@@ -253,31 +269,22 @@ function WorkspaceItem(props: {
   lifted: boolean;
   dragRef: { current: DragApi };
   onOpen(): void;
-  onLongPress(): void;
+  onMenu(pageY: number): void;
 }) {
   const { ws, theme, dragRef } = props;
-  const armed = useRef(false);
   const latest = useRef(ws);
   latest.current = ws;
   const pan = useMemo(
     () =>
       PanResponder.create({
         onStartShouldSetPanResponder: () => false,
+        // Mouse only: on touch screens a long press opens the menu, which can move it.
         onMoveShouldSetPanResponderCapture: (_e, g) =>
-          armed.current || (Platform.OS === "web" && Math.abs(g.dx) + Math.abs(g.dy) > MOUSE_DRAG_SLOP),
-        onPanResponderGrant: (_e, g) => {
-          armed.current = true;
-          dragRef.current.start(latest.current, g.moveX || g.x0, g.moveY || g.y0);
-        },
+          Platform.OS === "web" && Math.abs(g.dx) + Math.abs(g.dy) > MOUSE_DRAG_SLOP,
+        onPanResponderGrant: (_e, g) => dragRef.current.start(latest.current, g.moveX || g.x0, g.moveY || g.y0),
         onPanResponderMove: (_e, g) => dragRef.current.move(g.moveX, g.moveY),
-        onPanResponderRelease: (_e, g) => {
-          armed.current = false;
-          dragRef.current.end(g.moveX, g.moveY);
-        },
-        onPanResponderTerminate: () => {
-          armed.current = false;
-          dragRef.current.end(null, null);
-        },
+        onPanResponderRelease: (_e, g) => dragRef.current.end(g.moveX, g.moveY),
+        onPanResponderTerminate: () => dragRef.current.end(null, null),
         onPanResponderTerminationRequest: () => false,
       }),
     [dragRef],
@@ -298,34 +305,27 @@ function WorkspaceItem(props: {
       backgroundColor: props.active || state.pressed || hovered ? theme.colors.surface2 : "transparent",
     };
   };
+  // React Native Web forwards onContextMenu to the DOM; native platforms ignore it.
+  const contextMenu = {
+    onContextMenu: (event: { preventDefault?: () => void }) => {
+      event.preventDefault?.();
+      props.onMenu(pageYOf(event));
+    },
+  } as object;
   const count = ws.agents.length;
   return (
     <View {...pan.panHandlers} collapsable={false}>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={ws.title}
-        accessibilityHint="Drag onto a folder, or long press and then tap a folder"
+        accessibilityHint="Right-click or long press for more, or drag onto a folder"
         onPress={props.onOpen}
-        onLongPress={() => {
-          armed.current = true;
-          props.onLongPress();
-        }}
-        onPressOut={() => {
-          if (!armed.current) return;
-          setTimeout(() => {
-            armed.current = false;
-          }, 0);
-        }}
-        delayLongPress={350}
+        onLongPress={(event: GestureResponderEvent) => props.onMenu(pageYOf(event))}
+        delayLongPress={450}
         style={style}
+        {...contextMenu}
       >
-        <StatusIcon
-          running={ws.agents.some((a) => a.running)}
-          attention={ws.agents.some((a) => a.attention)}
-          icon={count > 1 ? "MessagesSquare" : "MessageSquare"}
-          theme={theme}
-          size={13}
-        />
+        <WorkspaceIcon workspace={ws} theme={theme} />
         <Text numberOfLines={1} style={{ flex: 1, color: theme.colors.foreground, fontSize: 13 }}>
           {ws.title}
         </Text>

@@ -91,12 +91,52 @@ export interface ListedAgent {
   workspaceId: string;
   workspaceName: string;
   archived: boolean;
-  /** A turn is in progress. */
-  running: boolean;
-  /** Paseo flagged it for the user: finished, failed, or waiting on a permission. */
-  attention: boolean;
+  /** Status as Paseo's sidebar shows it. */
+  bucket: StatusBucket;
+  /** Provider session ID, for the resume command. Empty when unknown. */
+  sessionId: string;
   /** ISO time used for sorting: last user message, else last update. */
   activityAt: string;
+}
+
+/** Paseo's sidebar status buckets, most urgent first. */
+export type StatusBucket = "needs_input" | "failed" | "running" | "attention" | "done";
+const BUCKET_PRIORITY: Record<StatusBucket, number> = { needs_input: 0, failed: 1, running: 2, attention: 3, done: 4 };
+
+/** Same rules as Paseo's sidebar: permissions first, then errors, work in progress, unread results. */
+export function agentBucket(agent: {
+  status: string;
+  requiresAttention?: boolean | null;
+  attentionReason?: string | null;
+  pendingPermissionCount?: number;
+}): StatusBucket {
+  if ((agent.pendingPermissionCount ?? 0) > 0 || agent.attentionReason === "permission") return "needs_input";
+  if (agent.status === "error" || agent.attentionReason === "error") return "failed";
+  if (agent.status === "running" || agent.status === "initializing") return "running";
+  if (agent.requiresAttention) return "attention";
+  return "done";
+}
+
+/** A workspace shows its most urgent conversation's status. */
+export function workspaceBucket(ws: { agents: readonly { bucket: StatusBucket }[] }): StatusBucket {
+  let best: StatusBucket = "done";
+  for (const a of ws.agents) if (BUCKET_PRIORITY[a.bucket] < BUCKET_PRIORITY[best]) best = a.bucket;
+  return best;
+}
+
+const RESUME_COMMANDS: Record<string, string> = {
+  claude: "claude --resume {sessionId}",
+  codex: "codex resume {sessionId}",
+  opencode: "opencode --session {sessionId}",
+  pi: "pi --session {sessionId}",
+  omp: "omp --session {sessionId}",
+  hermes: "hermes --resume {sessionId}",
+};
+
+/** The command Paseo's own tab menu copies, or null when the provider or session is unknown. */
+export function resumeCommand(provider: string, sessionId: string): string | null {
+  const template = RESUME_COMMANDS[provider.split("/")[0]];
+  return template && sessionId ? template.replace("{sessionId}", sessionId) : null;
 }
 
 /** An active workspace and its active top-level conversations, newest first. */

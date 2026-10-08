@@ -1,9 +1,10 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 import { Icon, Modal } from "@getpaseo/plugin/client/react-native";
 import { useMemo } from "react";
-import { ActivityIndicator, Pressable, Text, TextInput, View } from "react-native";
+import { Pressable, Text, TextInput, View } from "react-native";
 import { type Folder, type ListedWorkspace, UNSORTED_ID } from "../shared/model";
 import { formatDay } from "./data";
+import { WorkspaceIcon } from "./status";
 
 export function useStyles(theme: PluginTheme, compact: boolean) {
   return useMemo(() => {
@@ -85,20 +86,6 @@ export function SearchBox(props: { value: string; onChange(text: string): void; 
   );
 }
 
-/** Running spinner, attention dot, or the given icon. Mirrors Paseo's own row status. */
-export function StatusIcon(props: { running: boolean; attention: boolean; icon: string; theme: PluginTheme; size?: number }) {
-  const size = props.size ?? 14;
-  if (props.running) return <ActivityIndicator size="small" color={props.theme.colors.accent} style={{ width: size, height: size }} />;
-  if (props.attention) {
-    return (
-      <View style={{ width: size, height: size, alignItems: "center", justifyContent: "center" }}>
-        <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: props.theme.colors.accent }} />
-      </View>
-    );
-  }
-  return <Icon name={props.icon} size={size} color={props.theme.colors.foregroundMuted} />;
-}
-
 export function WorkspaceRow(props: {
   workspace: ListedWorkspace;
   notes: Record<string, string>;
@@ -116,12 +103,7 @@ export function WorkspaceRow(props: {
   const meta = [formatDay(workspace.activityAt), props.folderName ?? ""].filter(Boolean).join(" · ");
   return (
     <View style={styles.row}>
-      <StatusIcon
-        running={workspace.agents.some((a) => a.running)}
-        attention={workspace.agents.some((a) => a.attention)}
-        icon={many ? "MessagesSquare" : "MessageSquare"}
-        theme={theme}
-      />
+      <WorkspaceIcon workspace={workspace} theme={theme} />
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`Open ${workspace.title}`}
