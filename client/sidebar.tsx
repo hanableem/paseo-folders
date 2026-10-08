@@ -14,7 +14,7 @@ import {
 } from "react-native";
 import { type ListedWorkspace, moveWorkspace, UNSORTED_ID, workspaceBucket, workspaceFolderOf } from "../shared/model";
 import { debugLog, useAutoImport, useDirectory, useFolders } from "./data";
-import { RowMenu } from "./menu";
+import { type MenuPoint, RowMenu, tint } from "./menu";
 import { StatusRing, WorkspaceIcon } from "./status";
 
 /** Rows listed under an open folder; the rest are one press away. */
@@ -44,7 +44,8 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
   const [openFolder, setOpenFolder] = useState<string | null>(null);
   const [drag, setDrag] = useState<{ ws: ListedWorkspace; y: number } | null>(null);
   const [hoverId, setHoverId] = useState<string | null>(null);
-  const [menu, setMenu] = useState<{ ws: ListedWorkspace; top: number } | null>(null);
+  const [menu, setMenu] = useState<{ ws: ListedWorkspace; at: MenuPoint } | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(lastOpened);
   const container = useRef<View | null>(null);
   const containerTop = useRef(0);
   const folderViews = useRef(new Map<string, View | null>());
@@ -71,8 +72,12 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
   // With nothing chosen, show Unsorted open so new workspaces are easy to file.
   const shownFolder = openFolder ?? (unsortedCount > 0 ? UNSORTED_ID : null);
 
-  const openWorkspace = (ws: ListedWorkspace) =>
+  const openWorkspace = (ws: ListedWorkspace) => {
+    // Plugins cannot see which workspace Paseo shows, so remember the one opened from here.
+    lastOpened = ws.id;
+    setSelectedId(ws.id);
     openScreen({ screenId: "open", params: { workspaceId: ws.id, name: ws.title } });
+  };
 
   async function moveTo(ws: ListedWorkspace, folderId: string, folderName: string) {
     if (!ready || workspaceFolderOf(ready.doc, ws) === folderId) return;
@@ -92,11 +97,9 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
     return null;
   };
 
-  const openMenu = (ws: ListedWorkspace, pageY: number) => {
-    const place = (top: number) => setMenu({ ws, top: Math.max(0, pageY - top - 8) });
-    if (container.current) container.current.measureInWindow((_x, y) => place(y));
-    else place(0);
-    debugLog("menu", { platform: Platform.OS });
+  const openMenu = (ws: ListedWorkspace, at: MenuPoint) => {
+    setMenu({ ws, at });
+    debugLog("menu", { platform: Platform.OS, x: Math.round(at.x), y: Math.round(at.y) });
   };
 
   const dragApi: DragApi = {
@@ -150,7 +153,7 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
 
   const groups = [{ id: UNSORTED_ID, name: "Unsorted" }, ...ready.doc.folders];
   return (
-    <View ref={container} collapsable={false}>
+    <View ref={container} collapsable={false} style={menu ? { zIndex: 1000 } : null}>
       {header}
       {groups.map((folder) => {
         const list = byFolder.get(folder.id) ?? [];
@@ -196,11 +199,11 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
                 key={ws.id}
                 ws={ws}
                 theme={theme}
-                active={openWorkspaceId === ws.id}
+                active={openWorkspaceId === ws.id || selectedId === ws.id}
                 lifted={drag?.ws.id === ws.id}
                 dragRef={dragRef}
                 onOpen={() => openWorkspace(ws)}
-                onMenu={(pageY) => openMenu(ws, pageY)}
+                onMenu={(at) => openMenu(ws, at)}
               />
             ))}
             {open && list.length > shown.length ? (
@@ -239,7 +242,7 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
       {menu ? (
         <RowMenu
           ws={menu.ws}
-          top={menu.top}
+          at={menu.at}
           theme={theme}
           folders={ready}
           onOpen={() => openWorkspace(menu.ws)}
@@ -256,10 +259,20 @@ interface DragApi {
   end(x: number | null, y: number | null): void;
 }
 
-function pageYOf(event: unknown): number {
-  const e = event as { nativeEvent?: { pageY?: number; clientY?: number }; pageY?: number; clientY?: number };
-  return e.nativeEvent?.pageY ?? e.nativeEvent?.clientY ?? e.pageY ?? e.clientY ?? 0;
+type PointerLike = { clientX?: number; clientY?: number; pageX?: number; pageY?: number };
+
+/** Window coordinates of a mouse or touch event. */
+function pointOf(event: unknown): MenuPoint {
+  const e = event as PointerLike & { nativeEvent?: PointerLike };
+  const n = e.nativeEvent ?? {};
+  return {
+    x: n.clientX ?? e.clientX ?? n.pageX ?? e.pageX ?? 0,
+    y: n.clientY ?? e.clientY ?? n.pageY ?? e.pageY ?? 0,
+  };
 }
+
+/** The workspace last opened from this list; survives the screen switch that opening causes. */
+let lastOpened: string | null = null;
 
 /** A workspace row with Paseo-style status, its title, and how many conversations it holds. */
 function WorkspaceItem(props: {
@@ -269,9 +282,10 @@ function WorkspaceItem(props: {
   lifted: boolean;
   dragRef: { current: DragApi };
   onOpen(): void;
-  onMenu(pageY: number): void;
+  onMenu(at: MenuPoint): void;
 }) {
   const { ws, theme, dragRef } = props;
+  const [hovered, setHovered] = useState(false);
   const latest = useRef(ws);
   latest.current = ws;
   const pan = useMemo(
@@ -289,27 +303,30 @@ function WorkspaceItem(props: {
       }),
     [dragRef],
   );
-  const style = (state: PressableStateCallbackType) => {
-    // React Native Web also reports hover; native platforms omit it.
-    const hovered = (state as PressableStateCallbackType & { hovered?: boolean }).hovered;
-    return {
-      flexDirection: "row" as const,
-      alignItems: "center" as const,
-      gap: 8,
-      marginHorizontal: 8,
-      paddingLeft: 26,
-      paddingRight: 10,
-      paddingVertical: 5,
-      borderRadius: 6,
-      opacity: props.lifted ? 0.5 : 1,
-      backgroundColor: props.active || state.pressed || hovered ? theme.colors.surface2 : "transparent",
-    };
-  };
+  // Selected, pressed and hovered rows darken like Paseo's own list.
+  const style = (state: PressableStateCallbackType) => ({
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    gap: 8,
+    marginHorizontal: 8,
+    paddingLeft: 26,
+    paddingRight: 6,
+    paddingVertical: 6,
+    borderRadius: 8,
+    opacity: props.lifted ? 0.5 : 1,
+    backgroundColor: props.active
+      ? tint(theme.colors.foreground, 0.09)
+      : state.pressed
+        ? tint(theme.colors.foreground, 0.12)
+        : hovered
+          ? tint(theme.colors.foreground, 0.05)
+          : "transparent",
+  });
   // React Native Web forwards onContextMenu to the DOM; native platforms ignore it.
   const contextMenu = {
     onContextMenu: (event: { preventDefault?: () => void }) => {
       event.preventDefault?.();
-      props.onMenu(pageYOf(event));
+      props.onMenu(pointOf(event));
     },
   } as object;
   const count = ws.agents.length;
@@ -320,7 +337,9 @@ function WorkspaceItem(props: {
         accessibilityLabel={ws.title}
         accessibilityHint="Right-click or long press for more, or drag onto a folder"
         onPress={props.onOpen}
-        onLongPress={(event: GestureResponderEvent) => props.onMenu(pageYOf(event))}
+        onLongPress={(event: GestureResponderEvent) => props.onMenu(pointOf(event))}
+        onHoverIn={() => setHovered(true)}
+        onHoverOut={() => setHovered(false)}
         delayLongPress={450}
         style={style}
         {...contextMenu}
@@ -330,6 +349,15 @@ function WorkspaceItem(props: {
           {ws.title}
         </Text>
         {count > 1 ? <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>{count}</Text> : null}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`More for ${ws.title}`}
+          onPress={(event) => props.onMenu(pointOf(event))}
+          hitSlop={6}
+          style={{ width: 18, alignItems: "center", opacity: hovered || props.active ? 1 : 0 }}
+        >
+          <Icon name="EllipsisVertical" size={14} color={theme.colors.foregroundMuted} />
+        </Pressable>
       </Pressable>
     </View>
   );

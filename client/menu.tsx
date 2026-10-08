@@ -1,20 +1,41 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 import { usePaseo } from "@getpaseo/plugin/client";
 import { copyText, Icon, useToast } from "@getpaseo/plugin/client/react-native";
-import { useState } from "react";
-import { Pressable, type PressableStateCallbackType, Text, TextInput, View } from "react-native";
+import { type ReactNode, useState } from "react";
+import { Dimensions, Platform, Pressable, type PressableStateCallbackType, Text, TextInput, View } from "react-native";
 import { type ListedWorkspace, moveWorkspace, resumeCommand, UNSORTED_ID, workspaceFolderOf } from "../shared/model";
 import type { ReadyFolders } from "./data";
 
 type Page = "main" | "move" | "rename" | "archive";
 
+/** Where the pointer was, in window coordinates. */
+export interface MenuPoint {
+  x: number;
+  y: number;
+}
+
+const MENU_WIDTH = 248;
+const ITEM_HEIGHT = 36;
+
+/** On the web a fixed layer escapes the sidebar's layout, like Paseo's own menus. */
+const layer = (Platform.OS === "web" ? "fixed" : "absolute") as "absolute";
+
+/** Translucent foreground, for hover and selection that read on light and dark themes. */
+export function tint(hex: string, alpha: number): string {
+  const m = /^#?([0-9a-f]{6})/i.exec(hex.trim());
+  if (!m) return "transparent";
+  const n = parseInt(m[1], 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+}
+
 /**
- * Right-click (or long-press) menu for a workspace row: open, move to a folder,
- * rename, copy the resume command or agent ID like Paseo's tab menu, archive.
+ * Right-click (or long-press) menu for a workspace row, styled after Paseo's
+ * tab menu and opened at the pointer: open, move to a folder, rename, copy the
+ * resume command or agent id, archive.
  */
 export function RowMenu(props: {
   ws: ListedWorkspace;
-  top: number;
+  at: MenuPoint;
   theme: PluginTheme;
   folders: ReadyFolders;
   onOpen(): void;
@@ -45,17 +66,19 @@ export function RowMenu(props: {
     return {
       flexDirection: "row" as const,
       alignItems: "center" as const,
-      gap: 10,
-      paddingHorizontal: 10,
-      paddingVertical: 7,
-      borderRadius: 6,
+      minHeight: ITEM_HEIGHT,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      gap: 8,
       backgroundColor: hovered || state.pressed ? c.surface2 : "transparent",
     };
   };
   const item = (key: string, icon: string, label: string, onPress: () => void, trailing?: string) => (
     <Pressable key={key} accessibilityRole="menuitem" accessibilityLabel={label} onPress={onPress} style={itemStyle}>
-      <Icon name={icon} size={15} color={c.foreground} />
-      <Text style={{ flex: 1, color: c.foreground, fontSize: 13 }} numberOfLines={1}>
+      <View style={{ width: 18, alignItems: "center", justifyContent: "center", marginRight: 4 }}>
+        <Icon name={icon} size={16} color={c.foreground} />
+      </View>
+      <Text style={{ flex: 1, color: c.foreground, fontSize: 14 }} numberOfLines={1}>
         {label}
       </Text>
       {trailing ? <Text style={{ color: c.foregroundMuted, fontSize: 12 }}>{trailing}</Text> : null}
@@ -64,42 +87,45 @@ export function RowMenu(props: {
   const separator = (key: string) => <View key={key} style={{ height: 1, backgroundColor: c.border, marginVertical: 4 }} />;
   const back = item("back", "ChevronLeft", ws.title, () => setPage("main"));
 
-  let body: React.ReactNode;
+  let body: ReactNode;
+  let rows = 7;
   if (page === "move") {
     const choices = [...folders.doc.folders, { id: UNSORTED_ID, name: "Unsorted" }];
+    rows = choices.length + 1;
     body = (
       <>
         {back}
         {separator("s1")}
         {choices.map((f) =>
-          item(
-            f.id,
-            f.id === current ? "Check" : f.id === UNSORTED_ID ? "Inbox" : "Folder",
-            f.name,
-            () =>
-              void act(
-                async () => {
-                  if (f.id === current) return;
-                  if (!(await folders.update((d) => moveWorkspace(d, ws.id, f.id)))) throw new Error("save failed");
-                },
-                `Moved to ${f.name}`,
-                "Could not move. Try again.",
-              ),
+          item(f.id, f.id === current ? "Check" : f.id === UNSORTED_ID ? "Inbox" : "Folder", f.name, () =>
+            void act(
+              async () => {
+                if (f.id === current) return;
+                if (!(await folders.update((d) => moveWorkspace(d, ws.id, f.id)))) throw new Error("save failed");
+              },
+              `Moved to ${f.name}`,
+              "Could not move. Try again.",
+            ),
           ),
         )}
       </>
     );
   } else if (page === "rename") {
+    rows = 3;
+    const save = () =>
+      draft.trim() &&
+      void act(() => paseo.workspaces.ref(ws.id).setTitle(draft.trim()), "Renamed", "Could not rename.");
     body = (
       <>
         {back}
         {separator("s1")}
-        <View style={{ padding: 6, gap: 6 }}>
+        <View style={{ paddingHorizontal: 8, paddingVertical: 6 }}>
           <TextInput
             value={draft}
             onChangeText={setDraft}
             autoFocus
             selectTextOnFocus
+            onSubmitEditing={save}
             accessibilityLabel="Workspace title"
             style={{
               color: c.foreground,
@@ -108,28 +134,21 @@ export function RowMenu(props: {
               borderRadius: 6,
               paddingHorizontal: 8,
               paddingVertical: 6,
-              fontSize: 13,
+              fontSize: 14,
               backgroundColor: c.surface0,
             }}
-            onSubmitEditing={() =>
-              draft.trim() &&
-              void act(() => paseo.workspaces.ref(ws.id).setTitle(draft.trim()), "Renamed", "Could not rename.")
-            }
           />
-          {item("save", "Check", "Save", () =>
-            draft.trim()
-              ? void act(() => paseo.workspaces.ref(ws.id).setTitle(draft.trim()), "Renamed", "Could not rename.")
-              : undefined,
-          )}
         </View>
+        {item("save", "Check", "Save", save)}
       </>
     );
   } else if (page === "archive") {
+    rows = 4;
     body = (
       <>
         {back}
         {separator("s1")}
-        <Text style={{ color: c.foregroundMuted, fontSize: 12, paddingHorizontal: 10, paddingVertical: 6 }}>
+        <Text style={{ color: c.foregroundMuted, fontSize: 12, paddingHorizontal: 12, paddingVertical: 6 }}>
           Archive this workspace? Its conversations stay in History and can be restored.
         </Text>
         {item("confirm", "Archive", "Archive", () =>
@@ -149,7 +168,7 @@ export function RowMenu(props: {
           setDraft(ws.title);
           setPage("rename");
         })}
-        {single || resume ? separator("s1") : null}
+        {resume || single ? separator("s1") : null}
         {resume
           ? item("resume", "Copy", "Copy resume command", () =>
               void act(() => copyText(resume), "Resume command copied", "Could not copy."),
@@ -170,32 +189,40 @@ export function RowMenu(props: {
     );
   }
 
+  // Keep the menu inside the window, flipping up or left near the edges.
+  const win = Dimensions.get("window");
+  const height = rows * ITEM_HEIGHT + 16;
+  const left = Math.max(8, Math.min(props.at.x, win.width - MENU_WIDTH - 8));
+  const top = props.at.y + height > win.height - 8 ? Math.max(8, props.at.y - height) : props.at.y;
+  const closeOnContext = { onContextMenu: (e: { preventDefault?: () => void }) => (e.preventDefault?.(), props.onClose()) } as object;
+
   return (
     <>
       <Pressable
         accessibilityLabel="Close menu"
         onPress={props.onClose}
-        style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0 }}
+        style={{ position: layer, left: 0, top: 0, width: win.width, height: win.height, zIndex: 999 }}
+        {...closeOnContext}
       />
       <View
         accessibilityRole="menu"
         style={{
-          position: "absolute",
-          top: props.top,
-          left: 16,
-          right: 8,
-          maxWidth: 280,
-          padding: 4,
+          position: layer,
+          left,
+          top,
+          width: MENU_WIDTH,
+          paddingVertical: 4,
           borderRadius: 10,
           borderWidth: 1,
           borderColor: c.border,
           backgroundColor: c.surface1,
+          overflow: "hidden",
           shadowColor: "#000",
-          shadowOpacity: 0.18,
-          shadowRadius: 12,
-          shadowOffset: { width: 0, height: 4 },
-          elevation: 8,
-          zIndex: 50,
+          shadowOpacity: 0.16,
+          shadowRadius: 16,
+          shadowOffset: { width: 0, height: 6 },
+          elevation: 12,
+          zIndex: 1000,
         }}
       >
         {body}
