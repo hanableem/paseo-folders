@@ -45,6 +45,7 @@ export function useTopLevelAgents(): AgentsState {
 
   const reload = useCallback(async () => {
     try {
+      const workspaceTitles = await listWorkspaceTitles(paseoRef.current);
       const out: ListedAgent[] = [];
       let cursor: string | undefined;
       for (let page = 0; page < MAX_PAGES; page += 1) {
@@ -56,7 +57,7 @@ export function useTopLevelAgents(): AgentsState {
           if (agent.labels?.[PARENT_AGENT_LABEL]) continue;
           out.push({
             id: agent.id,
-            title: agent.title?.trim() || project.workspaceName?.trim() || "Untitled",
+            title: agent.title?.trim() || "",
             provider: agent.provider,
             workspaceId: agent.workspaceId ?? "",
             workspaceName: project.workspaceName ?? "",
@@ -69,7 +70,7 @@ export function useTopLevelAgents(): AgentsState {
         cursor = next;
       }
       if (!alive.current) return;
-      setAgents(out);
+      setAgents(withDisplayTitles(out, workspaceTitles));
       setError(null);
     } catch (e) {
       if (alive.current) setError(e instanceof Error ? e.message : String(e));
@@ -89,6 +90,46 @@ export function useTopLevelAgents(): AgentsState {
   }, [reload]);
 
   return { agents, loading, error, reload };
+}
+
+type PaseoApi = ReturnType<typeof usePaseo>;
+
+/** Workspace ID -> title. Archived workspaces may be missing; callers fall back to agent titles. */
+async function listWorkspaceTitles(paseo: PaseoApi): Promise<Map<string, string>> {
+  const titles = new Map<string, string>();
+  try {
+    let cursor: string | undefined;
+    for (let page = 0; page < MAX_PAGES; page += 1) {
+      const result = await paseo.workspaces.list({
+        page: cursor ? { limit: PAGE_SIZE, cursor } : { limit: PAGE_SIZE },
+      });
+      for (const ws of result.entries) {
+        const title = ws.title?.trim();
+        if (title) titles.set(ws.id, title);
+      }
+      const next = result.pageInfo?.nextCursor;
+      if (!result.pageInfo?.hasMore || !next) break;
+      cursor = next;
+    }
+  } catch {
+    // Titles are cosmetic; agents still list without them.
+  }
+  return titles;
+}
+
+/**
+ * Paseo's sidebar shows a workspace's title. When a workspace holds a single
+ * conversation, use that title so rows match what the user already recognizes.
+ */
+function withDisplayTitles(agents: ListedAgent[], workspaceTitles: Map<string, string>): ListedAgent[] {
+  const perWorkspace = new Map<string, number>();
+  for (const a of agents) perWorkspace.set(a.workspaceId, (perWorkspace.get(a.workspaceId) ?? 0) + 1);
+  return agents.map((a) => {
+    const wsTitle = workspaceTitles.get(a.workspaceId) ?? "";
+    const single = perWorkspace.get(a.workspaceId) === 1;
+    const title = (single && wsTitle) || a.title || wsTitle || a.workspaceName || "Untitled";
+    return { ...a, title };
+  });
 }
 
 export type FoldersState =

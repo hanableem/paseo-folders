@@ -1,6 +1,5 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 import { Icon, Modal } from "@getpaseo/plugin/client/react-native";
-import { useWorkspace } from "@getpaseo/plugin/client";
 import { useMemo } from "react";
 import { Pressable, Text, TextInput, View } from "react-native";
 import { type Folder, type ListedAgent, UNSORTED_ID } from "../shared/model";
@@ -96,8 +95,7 @@ export function AgentRow(props: {
   onMove(): void;
 }) {
   const { agent, styles, theme } = props;
-  const workspaceTitle = useWorkspace(agent.workspaceId, (w) => w.title);
-  const title = agent.title === "Untitled" && workspaceTitle ? workspaceTitle : agent.title;
+  const title = agent.title;
   const meta = [formatDay(agent.activityAt), agent.provider, agent.archived ? "archived" : "", props.folderName ?? ""]
     .filter(Boolean)
     .join(" · ");
