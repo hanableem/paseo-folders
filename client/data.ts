@@ -168,16 +168,22 @@ export function useDirectory(): DirectoryState {
     };
     let unsubscribe: (() => void) | null = null;
     paseoRef.current.agents
-      .list({ subscribe: {}, filter: { includeArchived: true }, page: { limit: 500 }, signal: lifetime.signal })
-      .then(({ subscription }) => {
+      .list({ subscribe: {}, filter: { includeArchived: true }, page: { limit: PAGE_SIZE }, signal: lifetime.signal })
+      .then((result) => {
         if (stopped) return;
-        unsubscribe = subscription.subscribe({
+        debugLog("dir-list", { entries: result.entries.length, more: result.pageInfo.hasMore, sub: Boolean(result.subscription) });
+        // Seed from the first answer; the subscription only carries later changes and re-snapshots.
+        map.clear();
+        for (const { agent, project } of result.entries) put(agent, project.workspaceName ?? "");
+        flush();
+        setLoading(false);
+        setError(null);
+        unsubscribe = result.subscription.subscribe({
           snapshot: ({ entries }) => {
+            debugLog("dir-snapshot", { entries: entries.length });
             map.clear();
             for (const { agent, project } of entries) put(agent, project.workspaceName ?? "");
             flush();
-            setLoading(false);
-            setError(null);
           },
           update: (message) => {
             if (message.type !== "agent_update") return;
@@ -193,16 +199,27 @@ export function useDirectory(): DirectoryState {
       })
       .catch((e) => {
         if (stopped) return;
+        debugLog("dir-error", { message: String(e instanceof Error ? e.message : e).slice(0, 200) });
         setError(e instanceof Error ? e.message : String(e));
         setLoading(false);
       });
 
-    const loadTitles = async () => {
-      const titles = await listWorkspaceTitles(paseoRef.current);
-      if (!stopped) setWorkspaceTitles(titles);
+    // The live list covers one page (Paseo allows at most 200). A full pass each
+    // minute picks up anything beyond it and refreshes workspace titles.
+    const reconcile = async () => {
+      try {
+        const full = await fetchDirectory(paseoRef.current);
+        if (stopped) return;
+        setWorkspaceTitles(full.workspaceTitles);
+        for (const agent of full.agents) if (!map.has(agent.id)) map.set(agent.id, agent);
+        flush();
+        setLoading(false);
+      } catch (e) {
+        if (!stopped) debugLog("dir-reconcile-error", { message: String(e instanceof Error ? e.message : e).slice(0, 200) });
+      }
     };
-    void loadTitles();
-    const titleTimer = setInterval(() => void loadTitles(), 60_000);
+    void reconcile();
+    const titleTimer = setInterval(() => void reconcile(), 60_000);
     return () => {
       stopped = true;
       lifetime.abort();
