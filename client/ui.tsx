@@ -94,8 +94,23 @@ export function WorkspaceRow(props: {
   theme: PluginTheme;
   onOpen?: () => void;
   onMove(): void;
+  /** Right-click or long press; falls back to the move dialog when absent. */
+  onMenu?: (at: { x: number; y: number }) => void;
 }) {
   const { workspace, styles, theme } = props;
+  const pointer = (event: unknown) => {
+    const e = event as { nativeEvent?: { clientX?: number; clientY?: number; pageX?: number; pageY?: number } };
+    const n = e.nativeEvent ?? (event as { clientX?: number; clientY?: number; pageX?: number; pageY?: number });
+    return { x: n.clientX ?? n.pageX ?? 0, y: n.clientY ?? n.pageY ?? 0 };
+  };
+  const contextMenu = props.onMenu
+    ? ({
+        onContextMenu: (event: { preventDefault?: () => void }) => {
+          event.preventDefault?.();
+          props.onMenu?.(pointer(event));
+        },
+      } as object)
+    : {};
   const many = workspace.agents.length > 1;
   const detail = many
     ? `${workspace.agents.length} conversations: ${workspace.agents.map((a) => a.title).join(" · ")}`
@@ -110,8 +125,9 @@ export function WorkspaceRow(props: {
         accessibilityHint="Long press to move it to another folder"
         style={styles.rowMain}
         onPress={props.onOpen}
-        onLongPress={props.onMove}
+        onLongPress={(event) => (props.onMenu ? props.onMenu(pointer(event)) : props.onMove())}
         delayLongPress={400}
+        {...contextMenu}
       >
         <Text style={styles.title} numberOfLines={1}>
           {workspace.title}

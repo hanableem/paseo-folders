@@ -1,6 +1,6 @@
-Folders lets you sort your Paseo workspaces into folders. A Folders section at the top of the sidebar lists each folder with how many workspaces it holds. Open a folder to see its workspaces, newest first, with the same running spinner and attention dot as Paseo's own list. Press a workspace to open it.
+Folders lets you sort your Paseo workspaces into folders. A Folders section at the top of the sidebar lists each folder with how many workspaces it holds. Open a folder to see its workspaces, newest first, with Paseo's own status indicators; Show more lists the rest. Press a workspace to open it.
 
-To move a workspace, drag it onto another folder. On touch screens, long-press first. You can also long-press a workspace and then tap a folder. One folder is open at a time, so every folder stays on screen as a drop target.
+To move a workspace, drag it onto another folder with the mouse, or right-click it (long-press on touch screens) and choose Move to folder. The same menu copies the path, branch, resume command and agent id, renames and archives. One folder is open at a time, so every folder stays on screen as a drop target.
 
 Workspaces that are in no folder appear under Unsorted, which opens by default when it has anything in it.
 

@@ -1,4 +1,4 @@
-import type { PluginClientContext, PluginOpenScreenInput } from "@getpaseo/plugin/client";
+import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { usePaseo, useRpc, useSettings } from "@getpaseo/plugin/client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -28,11 +28,6 @@ export function setPluginClient(client: PluginClientContext | null): void {
 /** Fire-and-forget interaction log for tuning; never includes titles or notes. */
 export function debugLog(event: string, data: Record<string, string | number | boolean | null> = {}): void {
   void pluginClient?.rpc(debugLogRpc, { event, data }).catch(() => undefined);
-}
-
-/** Screens receive no `openScreen`, so they go through the registered client. */
-export function openPluginScreen(input: PluginOpenScreenInput): void {
-  pluginClient?.openScreen(input);
 }
 
 export type PaseoApi = ReturnType<typeof usePaseo>;

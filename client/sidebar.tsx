@@ -19,7 +19,7 @@ import { debugLog, useAutoImport, useDirectory, useFolders } from "./data";
 import { type MenuPoint, RowMenu, tint } from "./menu";
 import { StatusRing, WorkspaceIcon } from "./status";
 
-/** Rows listed under an open folder; the rest are one press away. */
+/** Rows listed under an open folder before Show more. */
 const MAX_ROWS_PER_FOLDER = 8;
 /** Mouse drags start after this many pixels. */
 const MOUSE_DRAG_SLOP = 6;
@@ -46,6 +46,7 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
   useAutoImport(folders, workspaces, !loading);
   const [expanded, setExpanded] = useState(true);
   const [openFolder, setOpenFolder] = useState<string | null>(null);
+  const [showAll, setShowAll] = useState<ReadonlySet<string>>(new Set());
   const [drag, setDrag] = useState<{ ws: ListedWorkspace; y: number } | null>(null);
   const [hoverId, setHoverId] = useState<string | null>(null);
   const [menu, setMenu] = useState<{
@@ -173,7 +174,15 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
         const isUnsorted = folder.id === UNSORTED_ID;
         if (isUnsorted && list.length === 0 && !drag) return null;
         const open = shownFolder === folder.id;
-        const shown = open ? list.slice(0, MAX_ROWS_PER_FOLDER) : [];
+        const all = showAll.has(folder.id);
+        const shown = open ? (all ? list : list.slice(0, MAX_ROWS_PER_FOLDER)) : [];
+        const toggleAll = () =>
+          setShowAll((prev) => {
+            const next = new Set(prev);
+            if (next.has(folder.id)) next.delete(folder.id);
+            else next.add(folder.id);
+            return next;
+          });
         const running = list.some((ws) => workspaceBucket(ws) === "running");
         return (
           <Fragment key={folder.id}>
@@ -192,7 +201,7 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
                 id={`folder-${folder.id}`}
                 icon={drag ? "FolderInput" : isUnsorted ? "Inbox" : open ? "FolderOpen" : "Folder"}
                 label={folder.name}
-                active={activeScreen === "folder" && currentScreen?.params.id === folder.id}
+                active={false}
                 onPress={() => setOpenFolder(open ? "" : folder.id)}
                 trailing={
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
@@ -219,12 +228,12 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
                 onMenu={(at) => openMenu(ws, at)}
               />
             ))}
-            {open && list.length > shown.length ? (
+            {open && list.length > MAX_ROWS_PER_FOLDER ? (
               <SidebarRow
                 id={`more-${folder.id}`}
-                icon="CornerDownRight"
-                label={`All ${list.length} in ${folder.name}`}
-                onPress={() => openScreen({ screenId: "folder", params: { id: folder.id, name: folder.name } })}
+                icon={all ? "ChevronUp" : "ChevronDown"}
+                label={all ? "Show less" : "Show more"}
+                onPress={toggleAll}
               />
             ) : null}
           </Fragment>

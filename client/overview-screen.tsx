@@ -1,7 +1,7 @@
 import type { PluginScreenProps } from "@getpaseo/plugin/client";
 import { useRpc } from "@getpaseo/plugin/client";
 import { useToast } from "@getpaseo/plugin/client/react-native";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ScrollView, Text, TextInput, View } from "react-native";
 import {
   addFolder,
@@ -18,7 +18,8 @@ import {
   UNSORTED_ID,
   workspaceFolderOf,
 } from "../shared/model";
-import { importSuggestions, openPluginScreen, useDirectory, useFolders } from "./data";
+import { importSuggestions, useDirectory, useFolders } from "./data";
+import { type MenuPoint, RowMenu } from "./menu";
 import { Button, MoveModal, SearchBox, type Styles, useStyles, WorkspaceRow } from "./ui";
 
 /** Manage folders, search every workspace, and import suggestions. */
@@ -26,7 +27,9 @@ export function OverviewScreen({ theme, layout, navigation }: PluginScreenProps)
   const styles = useStyles(theme, layout.compact);
   const toast = useToast();
   const folders = useFolders();
-  const { workspaces, loading, error } = useDirectory();
+  const { workspaces, workspaceMeta, loading, error } = useDirectory();
+  const [menu, setMenu] = useState<{ ws: ListedWorkspace; at: MenuPoint } | null>(null);
+  const closeMenu = useCallback(() => setMenu(null), []);
   const readSuggestions = useRpc(readSuggestionsRpc);
   const [query, setQuery] = useState("");
   const [newName, setNewName] = useState("");
@@ -81,6 +84,7 @@ export function OverviewScreen({ theme, layout, navigation }: PluginScreenProps)
                   theme={theme}
                   onOpen={navigation ? () => navigation.openWorkspace({ workspaceId: ws.id }) : undefined}
                   onMove={() => setMoving(ws)}
+                  onMenu={(at) => setMenu({ ws, at })}
                 />
               );
             })}
@@ -97,7 +101,6 @@ export function OverviewScreen({ theme, layout, navigation }: PluginScreenProps)
             last={index === doc.folders.length - 1}
             styles={styles}
             theme={theme}
-            onOpen={() => openPluginScreen({ screenId: "folder", params: { id: folder.id, name: folder.name } })}
             onRename={(name) => void save((d) => renameFolder(d, folder.id, name))}
             onDelete={() => void save((d) => deleteFolder(d, folder.id))}
             onMove={(delta) => void save((d) => moveFolder(d, folder.id, delta))}
@@ -106,11 +109,7 @@ export function OverviewScreen({ theme, layout, navigation }: PluginScreenProps)
         <View style={styles.row}>
           <Text style={[styles.text, { flex: 1 }]}>Unsorted</Text>
           <Text style={styles.muted}>{counts[UNSORTED_ID] ?? 0}</Text>
-          <Button
-            label="Open"
-            onPress={() => openPluginScreen({ screenId: "folder", params: { id: UNSORTED_ID, name: "Unsorted" } })}
-            styles={styles}
-          />
+
         </View>
         <View style={styles.toolbar}>
           <TextInput
@@ -152,6 +151,17 @@ export function OverviewScreen({ theme, layout, navigation }: PluginScreenProps)
           </Text>
         </View>
       </ScrollView>
+      {menu ? (
+        <RowMenu
+          ws={menu.ws}
+          meta={workspaceMeta.get(menu.ws.id)}
+          at={menu.at}
+          bounds={null}
+          theme={theme}
+          folders={ready}
+          onClose={closeMenu}
+        />
+      ) : null}
       <MoveModal
         open={moving !== null}
         onOpenChange={(open) => (open ? null : setMoving(null))}
@@ -176,7 +186,6 @@ function FolderRow(props: {
   last: boolean;
   styles: Styles;
   theme: PluginScreenProps["theme"];
-  onOpen(): void;
   onRename(name: string): void;
   onDelete(): void;
   onMove(delta: -1 | 1): void;
@@ -217,7 +226,6 @@ function FolderRow(props: {
         {props.folder.name}
       </Text>
       <Text style={styles.muted}>{props.count}</Text>
-      <Button label="Open" onPress={props.onOpen} styles={styles} />
       <Button label="↑" disabled={props.first} onPress={() => props.onMove(-1)} styles={styles} />
       <Button label="↓" disabled={props.last} onPress={() => props.onMove(1)} styles={styles} />
       <Button

@@ -6,9 +6,9 @@ Paseo groups workspaces by project directory. If most of your work runs in the s
 
 ## Features
 
-- A **Folders** section at the top of the sidebar: **Unsorted** first, then one row per folder with its workspace count. One folder is open at a time and lists up to eight workspaces, with Paseo's running spinner and attention dot.
-- Drag a workspace onto a folder to move it (long-press first on touch screens), or long-press it and tap a folder.
-- A folder screen with search and a move button on every workspace.
+- A **Folders** section at the top of the sidebar: **Unsorted** first, then one row per folder with its workspace count. One folder is open at a time and lists eight workspaces, with **Show more** and **Show less** for the rest. Rows show Paseo's status (running ring, attention and error dots) and, for a single conversation, its provider's mark.
+- With a mouse, drag a workspace onto a folder to move it.
+- Right-click a workspace, or long-press it on touch screens, for a menu modelled on Paseo's workspace menu: copy path, copy branch name, copy resume command and agent id, rename, **Move to folder**, archive.
 - A management screen to create, rename, reorder and delete folders, and to search every workspace and the conversations inside it.
 - An optional suggestions file, so a script can propose folders and one-line notes per conversation.
 - Folder data lives in Paseo plugin settings on the host, so your desktop and mobile apps share it.
