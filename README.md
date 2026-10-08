@@ -52,6 +52,17 @@ The plugin imports when the app starts and every ten minutes. An import that cha
 
 To read placements back, a script can read the plugin's settings document on the host: `<Paseo home>/plugin-settings/<installation id>/folders.json`. `values.workspaceAssignments` and `values.workspaceManual` hold the workspaces you placed by hand.
 
+## Split a conversation into its own workspace (experimental)
+
+Paseo cannot yet move a tab to another workspace. `scripts/split-agent.mjs` does it for an idle agent: it creates a local workspace in the agent's directory, archives the agent, and imports its provider session into the new workspace. Paseo reuses the same agent record, so the conversation, its ID and its history stay intact.
+
+```bash
+node scripts/split-agent.mjs <agent-id> "<new workspace title>" --dry-run   # show what would move
+node scripts/split-agent.mjs <agent-id> "<new workspace title>"
+```
+
+It uses Paseo's internal daemon client, the `paseo` CLI from `PATH` (or `PASEO_CLI`), and the daemon at `PASEO_WS_URL` (default `ws://127.0.0.1:6767/ws`). If the import fails, the agent stays archived and can be unarchived from History.
+
 ## Privacy
 
 - No telemetry and no network requests of its own.
