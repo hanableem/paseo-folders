@@ -1,8 +1,10 @@
-Folders lets you sort your Paseo conversations into folders. A Folders row at the top of the sidebar lists each folder with its conversation count. Opening a folder shows its conversations, newest first, with a search box. Tap a conversation to open it, or use its folder button to move it.
+Folders lets you sort your Paseo workspaces into folders. A Folders section at the top of the sidebar lists each folder with how many workspaces it holds. Open a folder to see its workspaces, newest first, with the same running spinner and attention dot as Paseo's own list. Press a workspace to open it.
 
-Every top-level agent on the host is included, archived ones too. Subagents are left out. Conversations that are in no folder appear under Unsorted.
+To move a workspace, drag it onto another folder. On touch screens, long-press first. You can also long-press a workspace and then tap a folder. One folder is open at a time, so every folder stays on screen as a drop target.
 
-Open Folders from the sidebar to create, rename, reorder or delete folders, and to search across all of them. Deleting a folder moves its conversations back to Unsorted; nothing is archived or deleted in Paseo.
+Workspaces that are in no folder appear under Unsorted, which opens by default when it has anything in it.
+
+Open Folders from the sidebar to create, rename, reorder or delete folders, and to search across every workspace and the conversations inside it. Deleting a folder moves its workspaces back to Unsorted; nothing is archived or deleted in Paseo.
 
 ## Suggestions file
 
@@ -18,8 +20,8 @@ Another tool, such as a script that classifies your conversations, can propose f
 }
 ```
 
-Folders are matched by name and created when missing. A conversation you moved by hand is never moved by an import, unless its ID is listed in `force`.
+Suggestions are per conversation. A workspace you have not placed yourself goes where most of its conversations point. A workspace holding several conversations and named exactly like a folder goes to that folder. A workspace you moved by hand stays put, unless the other tool lists its only conversation in `force`.
 
 ## Data and privacy
 
-Folder names, placements and notes are stored as Paseo plugin settings on the host, so every app connected to that host sees the same folders. Removing the plugin deletes them. The plugin reads the suggestions file and lists agents through Paseo; it makes no other network requests.
+Folder names, placements and notes are stored as Paseo plugin settings on the host, so every app connected to that host sees the same folders. Removing the plugin deletes them. The plugin reads the suggestions file and lists agents and workspaces through Paseo; it makes no other network requests.

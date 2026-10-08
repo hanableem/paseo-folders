@@ -1,18 +1,19 @@
 # Folders for Paseo
 
-A [Paseo](https://paseo.sh) plugin that sorts your conversations into folders in the sidebar.
+A [Paseo](https://paseo.sh) plugin that sorts your workspaces into folders in the sidebar.
 
-Paseo groups conversations by project directory. If most of your conversations run in the same directory, they end up in one long list. This plugin adds folders on top of that, without changing projects, workspaces or agents.
+Paseo groups workspaces by project directory. If most of your work runs in the same directory, it ends up in one long list. This plugin adds folders on top of that, without changing projects, workspaces or agents. Once you use it, you can collapse the project in Paseo's own list.
 
 ## Features
 
-- A **Folders** row at the top of the sidebar, followed by one row per folder with its conversation count, and **Unsorted** for the rest.
-- A folder screen with search, an archived toggle, and a move button on every conversation. Tapping a conversation opens it.
-- A management screen to create, rename, reorder and delete folders, and to search every conversation.
-- An optional suggestions file, so a script can propose folders and one-line notes. Placements you make by hand always win, unless the script lists the conversation in `force`.
+- A **Folders** section at the top of the sidebar: **Unsorted** first, then one row per folder with its workspace count. One folder is open at a time and lists up to eight workspaces, with Paseo's running spinner and attention dot.
+- Drag a workspace onto a folder to move it (long-press first on touch screens), or long-press it and tap a folder.
+- A folder screen with search and a move button on every workspace.
+- A management screen to create, rename, reorder and delete folders, and to search every workspace and the conversations inside it.
+- An optional suggestions file, so a script can propose folders and one-line notes per conversation.
 - Folder data lives in Paseo plugin settings on the host, so your desktop and mobile apps share it.
 
-Subagents are hidden. Archived agents are listed and shown dimmed.
+Subagents and archived workspaces are left out.
 
 ## Requirements
 
@@ -43,13 +44,13 @@ Default location: `<Paseo home>/paseo-folders/suggestions.json` (`~/.paseo` unle
 | Field | Meaning |
 | --- | --- |
 | `folders` | Folder names in display order. Missing folders are created; existing ones keep their position. |
-| `assignments` | Agent ID to folder name. Skipped for conversations you placed by hand, unless forced. |
+| `assignments` | Agent ID to folder name. A workspace you have not placed yourself goes where most of its conversations point; a workspace with several conversations named exactly like a folder goes to that folder. |
 | `notes` | Agent ID to a short note shown under the title and included in search. |
-| `force` | Agent IDs whose suggested folder should win even over a manual placement, for moves the user requested through the other tool. |
+| `force` | Agent IDs whose suggested folder should win even over a manual placement, for moves the user requested through the other tool. A forced conversation also moves its workspace when it is the only conversation there. |
 
 The plugin imports when the app starts and every ten minutes. An import that changes nothing saves nothing.
 
-To read placements back, a script can read the plugin's settings document on the host: `<Paseo home>/plugin-settings/<installation id>/folders.json`. Its `values.manual` map marks conversations placed by hand.
+To read placements back, a script can read the plugin's settings document on the host: `<Paseo home>/plugin-settings/<installation id>/folders.json`. `values.workspaceAssignments` and `values.workspaceManual` hold the workspaces you placed by hand.
 
 ## Privacy
 
