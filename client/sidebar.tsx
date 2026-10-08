@@ -14,10 +14,10 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
-import { type ListedWorkspace, moveWorkspace, UNSORTED_ID, workspaceBucket, workspaceFolderOf } from "../shared/model";
+import { type ListedWorkspace, moveWorkspace, UNSORTED_ID, workspaceFolderOf } from "../shared/model";
 import { debugLog, useAutoImport, useDirectory, useFolders } from "./data";
 import { type MenuPoint, RowMenu, tint } from "./menu";
-import { StatusRing, WorkspaceIcon } from "./status";
+import { BucketIndicator, mostUrgent, WorkspaceIcon } from "./status";
 
 /** Rows listed under an open folder before Show more. */
 const MAX_ROWS_PER_FOLDER = 8;
@@ -183,7 +183,8 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
             else next.add(folder.id);
             return next;
           });
-        const running = list.some((ws) => workspaceBucket(ws) === "running");
+        // Like Paseo's groups: a collapsed folder shows its most urgent status.
+        const status = open ? "done" : mostUrgent(list);
         return (
           <Fragment key={folder.id}>
             <View
@@ -205,7 +206,7 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
                 onPress={() => setOpenFolder(open ? "" : folder.id)}
                 trailing={
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                    {running && !open ? <StatusRing theme={theme} /> : null}
+                    <BucketIndicator bucket={status} theme={theme} />
                     <Text style={muted}>{list.length}</Text>
                     {drag
                       ? null

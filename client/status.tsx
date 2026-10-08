@@ -89,6 +89,27 @@ function bucketColor(bucket: StatusBucket, theme: PluginTheme): string | null {
 }
 
 /**
+ * A standalone status mark, as Paseo shows beside a group: the ring while
+ * running, an alert when input is needed, and a dot for failed or unread results.
+ */
+export function BucketIndicator({ bucket, theme }: { bucket: StatusBucket; theme: PluginTheme }) {
+  if (bucket === "done") return null;
+  if (bucket === "running") return <StatusRing theme={theme} />;
+  if (bucket === "needs_input") return <Icon name="CircleAlert" size={12} color={statusColors(theme).warning} />;
+  const color = bucketColor(bucket, theme);
+  return (
+    <View style={{ width: RING_FRAME, height: RING_FRAME, alignItems: "center", justifyContent: "center" }}>
+      <View style={{ width: DOT, height: DOT, borderRadius: DOT / 2, backgroundColor: color ?? "transparent" }} />
+    </View>
+  );
+}
+
+/** The most urgent status among several workspaces. */
+export function mostUrgent(workspaces: readonly ListedWorkspace[]): StatusBucket {
+  return workspaceBucket({ agents: workspaces.map((ws) => ({ bucket: workspaceBucket(ws) })) });
+}
+
+/**
  * The icon at the start of a workspace row. Running shows Paseo's ring; needing
  * input shows an alert. Otherwise a single conversation shows its provider's mark
  * and a shared workspace shows a stack icon, with a coloured dot for unread or
