@@ -1,0 +1,9 @@
+{
+  "id": "paseo-folders",
+  "name": "Folders",
+  "description": "Sort your conversations into folders in the sidebar. Hand-placed conversations stay put; another tool can suggest folders through a JSON file.",
+  "media": [],
+  "requirements": {
+    "paseo": ">=0.11.1"
+  }
+}
