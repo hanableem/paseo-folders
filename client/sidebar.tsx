@@ -44,7 +44,11 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
   const [openFolder, setOpenFolder] = useState<string | null>(null);
   const [drag, setDrag] = useState<{ ws: ListedWorkspace; y: number } | null>(null);
   const [hoverId, setHoverId] = useState<string | null>(null);
-  const [menu, setMenu] = useState<{ ws: ListedWorkspace; at: MenuPoint } | null>(null);
+  const [menu, setMenu] = useState<{
+    ws: ListedWorkspace;
+    at: MenuPoint;
+    bounds: { left: number; width: number } | null;
+  } | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(lastOpened);
   const container = useRef<View | null>(null);
   const containerTop = useRef(0);
@@ -98,7 +102,10 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
   };
 
   const openMenu = (ws: ListedWorkspace, at: MenuPoint) => {
-    setMenu({ ws, at });
+    setMenu({ ws, at, bounds: null });
+    container.current?.measureInWindow((x, _y, width) => {
+      setMenu((m) => (m && m.ws.id === ws.id ? { ...m, bounds: { left: x, width } } : m));
+    });
     debugLog("menu", { platform: Platform.OS, x: Math.round(at.x), y: Math.round(at.y) });
   };
 
@@ -243,6 +250,7 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
         <RowMenu
           ws={menu.ws}
           at={menu.at}
+          bounds={menu.bounds}
           theme={theme}
           folders={ready}
           onOpen={() => openWorkspace(menu.ws)}

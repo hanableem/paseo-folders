@@ -14,8 +14,9 @@ export interface MenuPoint {
   y: number;
 }
 
-const MENU_WIDTH = 248;
-const ITEM_HEIGHT = 36;
+// Paseo's own menu metrics (desktop): 28 px items, 4 px page padding, 220 px wide.
+const MENU_WIDTH = 220;
+const ITEM_HEIGHT = 28;
 
 /** On the web a fixed layer escapes the sidebar's layout, like Paseo's own menus. */
 const layer = (Platform.OS === "web" ? "fixed" : "absolute") as "absolute";
@@ -36,6 +37,8 @@ export function tint(hex: string, alpha: number): string {
 export function RowMenu(props: {
   ws: ListedWorkspace;
   at: MenuPoint;
+  /** Horizontal room the sidebar leaves, in window coordinates; the menu stays inside it. */
+  bounds: { left: number; width: number } | null;
   theme: PluginTheme;
   folders: ReadyFolders;
   onOpen(): void;
@@ -67,21 +70,29 @@ export function RowMenu(props: {
       flexDirection: "row" as const,
       alignItems: "center" as const,
       minHeight: ITEM_HEIGHT,
-      paddingHorizontal: 12,
-      paddingVertical: 8,
       gap: 8,
+      marginHorizontal: 4,
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderWidth: 1,
+      borderColor: "transparent",
+      borderRadius: 6,
       backgroundColor: hovered || state.pressed ? c.surface2 : "transparent",
     };
   };
   const item = (key: string, icon: string, label: string, onPress: () => void, trailing?: string) => (
     <Pressable key={key} accessibilityRole="menuitem" accessibilityLabel={label} onPress={onPress} style={itemStyle}>
-      <View style={{ width: 18, alignItems: "center", justifyContent: "center", marginRight: 4 }}>
+      <View style={{ width: 16, alignItems: "center", justifyContent: "center" }}>
         <Icon name={icon} size={16} color={c.foreground} />
       </View>
-      <Text style={{ flex: 1, color: c.foreground, fontSize: 14 }} numberOfLines={1}>
+      <Text style={{ flexShrink: 1, minWidth: 0, color: c.foreground, fontSize: 14, lineHeight: 18 }} numberOfLines={1}>
         {label}
       </Text>
-      {trailing ? <Text style={{ color: c.foregroundMuted, fontSize: 12 }}>{trailing}</Text> : null}
+      {trailing ? (
+        <View style={{ marginLeft: "auto", alignItems: "center", justifyContent: "center" }}>
+          <Text style={{ color: c.foregroundMuted, fontSize: 12 }}>{trailing}</Text>
+        </View>
+      ) : null}
     </Pressable>
   );
   const separator = (key: string) => <View key={key} style={{ height: 1, backgroundColor: c.border, marginVertical: 4 }} />;
@@ -119,7 +130,7 @@ export function RowMenu(props: {
       <>
         {back}
         {separator("s1")}
-        <View style={{ paddingHorizontal: 8, paddingVertical: 6 }}>
+        <View style={{ marginHorizontal: 4, paddingVertical: 4 }}>
           <TextInput
             value={draft}
             onChangeText={setDraft}
@@ -133,9 +144,10 @@ export function RowMenu(props: {
               borderColor: c.border,
               borderRadius: 6,
               paddingHorizontal: 8,
-              paddingVertical: 6,
+              paddingVertical: 4,
+              minHeight: ITEM_HEIGHT,
               fontSize: 14,
-              backgroundColor: c.surface0,
+              backgroundColor: c.surface2,
             }}
           />
         </View>
@@ -148,7 +160,7 @@ export function RowMenu(props: {
       <>
         {back}
         {separator("s1")}
-        <Text style={{ color: c.foregroundMuted, fontSize: 12, paddingHorizontal: 12, paddingVertical: 6 }}>
+        <Text style={{ color: c.foregroundMuted, fontSize: 12, paddingHorizontal: 12, paddingVertical: 4 }}>
           Archive this workspace? Its conversations stay in History and can be restored.
         </Text>
         {item("confirm", "Archive", "Archive", () =>
@@ -189,10 +201,13 @@ export function RowMenu(props: {
     );
   }
 
-  // Keep the menu inside the window, flipping up or left near the edges.
+  // Paseo clips the sidebar, so keep the menu inside it, opening up or left near the edges.
   const win = Dimensions.get("window");
-  const height = rows * ITEM_HEIGHT + 16;
-  const left = Math.max(8, Math.min(props.at.x, win.width - MENU_WIDTH - 8));
+  const minX = (props.bounds?.left ?? 0) + 4;
+  const maxX = props.bounds ? props.bounds.left + props.bounds.width - 4 : win.width - 8;
+  const width = Math.min(MENU_WIDTH, Math.max(160, maxX - minX));
+  const height = rows * ITEM_HEIGHT + 8 + 9;
+  const left = Math.max(minX, Math.min(props.at.x, maxX - width));
   const top = props.at.y + height > win.height - 8 ? Math.max(8, props.at.y - height) : props.at.y;
   const closeOnContext = { onContextMenu: (e: { preventDefault?: () => void }) => (e.preventDefault?.(), props.onClose()) } as object;
 
@@ -210,18 +225,17 @@ export function RowMenu(props: {
           position: layer,
           left,
           top,
-          width: MENU_WIDTH,
+          width,
           paddingVertical: 4,
-          borderRadius: 10,
+          borderRadius: 8,
           borderWidth: 1,
           borderColor: c.border,
           backgroundColor: c.surface1,
           overflow: "hidden",
-          shadowColor: "#000",
-          shadowOpacity: 0.16,
-          shadowRadius: 16,
-          shadowOffset: { width: 0, height: 6 },
-          elevation: 12,
+          shadowColor: "rgba(0, 0, 0, 0.20)",
+          shadowOffset: { width: 0, height: 4 },
+          shadowRadius: 8,
+          elevation: 8,
           zIndex: 1000,
         }}
       >
