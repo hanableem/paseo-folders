@@ -1,8 +1,8 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 import { Icon, Modal } from "@getpaseo/plugin/client/react-native";
 import { useMemo } from "react";
-import { Pressable, Text, TextInput, View } from "react-native";
-import { type Folder, type ListedAgent, UNSORTED_ID } from "../shared/model";
+import { ActivityIndicator, Pressable, Text, TextInput, View } from "react-native";
+import { type Folder, type ListedWorkspace, UNSORTED_ID } from "../shared/model";
 import { formatDay } from "./data";
 
 export function useStyles(theme: PluginTheme, compact: boolean) {
@@ -85,25 +85,46 @@ export function SearchBox(props: { value: string; onChange(text: string): void; 
   );
 }
 
-export function AgentRow(props: {
-  agent: ListedAgent;
-  note: string;
+/** Running spinner, attention dot, or the given icon. Mirrors Paseo's own row status. */
+export function StatusIcon(props: { running: boolean; attention: boolean; icon: string; theme: PluginTheme; size?: number }) {
+  const size = props.size ?? 14;
+  if (props.running) return <ActivityIndicator size="small" color={props.theme.colors.accent} style={{ width: size, height: size }} />;
+  if (props.attention) {
+    return (
+      <View style={{ width: size, height: size, alignItems: "center", justifyContent: "center" }}>
+        <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: props.theme.colors.accent }} />
+      </View>
+    );
+  }
+  return <Icon name={props.icon} size={size} color={props.theme.colors.foregroundMuted} />;
+}
+
+export function WorkspaceRow(props: {
+  workspace: ListedWorkspace;
+  notes: Record<string, string>;
   folderName?: string;
   styles: Styles;
   theme: PluginTheme;
   onOpen?: () => void;
   onMove(): void;
 }) {
-  const { agent, styles, theme } = props;
-  const title = agent.title;
-  const meta = [formatDay(agent.activityAt), agent.provider, agent.archived ? "archived" : "", props.folderName ?? ""]
-    .filter(Boolean)
-    .join(" · ");
+  const { workspace, styles, theme } = props;
+  const many = workspace.agents.length > 1;
+  const detail = many
+    ? `${workspace.agents.length} conversations: ${workspace.agents.map((a) => a.title).join(" · ")}`
+    : props.notes[workspace.agents[0]?.id ?? ""] ?? "";
+  const meta = [formatDay(workspace.activityAt), props.folderName ?? ""].filter(Boolean).join(" · ");
   return (
-    <View style={[styles.row, agent.archived ? { opacity: 0.75 } : null]}>
+    <View style={styles.row}>
+      <StatusIcon
+        running={workspace.agents.some((a) => a.running)}
+        attention={workspace.agents.some((a) => a.attention)}
+        icon={many ? "MessagesSquare" : "MessageSquare"}
+        theme={theme}
+      />
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`Open ${title}`}
+        accessibilityLabel={`Open ${workspace.title}`}
         accessibilityHint="Long press to move it to another folder"
         style={styles.rowMain}
         onPress={props.onOpen}
@@ -111,18 +132,18 @@ export function AgentRow(props: {
         delayLongPress={400}
       >
         <Text style={styles.title} numberOfLines={1}>
-          {title}
+          {workspace.title}
         </Text>
-        {props.note ? (
+        {detail ? (
           <Text style={styles.text} numberOfLines={2}>
-            {props.note}
+            {detail}
           </Text>
         ) : null}
         <Text style={styles.muted} numberOfLines={1}>
           {meta}
         </Text>
       </Pressable>
-      <Pressable accessibilityRole="button" accessibilityLabel={`Move ${title}`} onPress={props.onMove} style={styles.button}>
+      <Pressable accessibilityRole="button" accessibilityLabel={`Move ${workspace.title}`} onPress={props.onMove} style={styles.button}>
         <Icon name="FolderInput" size={16} color={theme.colors.foreground} />
       </Pressable>
     </View>

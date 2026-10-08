@@ -3,19 +3,13 @@ import type { PluginSidebarItemProps } from "@getpaseo/plugin/client";
 import { Icon, useToast } from "@getpaseo/plugin/client/react-native";
 import { SidebarRow } from "@getpaseo/plugin/client/ui";
 import { Fragment, useMemo, useRef, useState } from "react";
-import {
-  PanResponder,
-  Platform,
-  Pressable,
-  type PressableStateCallbackType,
-  Text,
-  View,
-} from "react-native";
-import { byRecentActivity, folderOf, type ListedAgent, moveAgent, UNSORTED_ID } from "../shared/model";
-import { debugLog, useAutoImport, useFolders, useTopLevelAgents } from "./data";
-import { refreshFolderPills } from "./pills";
+import { PanResponder, Platform, Pressable, type PressableStateCallbackType, Text, View } from "react-native";
+import { type ListedWorkspace, moveWorkspace, UNSORTED_ID, workspaceFolderOf } from "../shared/model";
+import { debugLog, useAutoImport, useDirectory, useFolders } from "./data";
+import { StatusIcon } from "./ui";
 
-const MAX_ROWS_PER_FOLDER = 25;
+/** Rows listed under an open folder; the rest are one press away. */
+const MAX_ROWS_PER_FOLDER = 8;
 /** Mouse drags start after this many pixels; touch drags start after a long press. */
 const MOUSE_DRAG_SLOP = 6;
 
@@ -26,74 +20,58 @@ interface Rect {
   height: number;
 }
 
-interface DragState {
-  agent: ListedAgent;
-  x: number;
-  y: number;
-}
-
 /**
- * A "Folders" row, then Unsorted and one row per folder. Expanding a folder
- * lists its active conversations. Drag a conversation onto a folder to move it
- * (long-press first on touch screens), or long-press it and tap a folder.
+ * Folders of workspaces, like Paseo's own list but grouped. One folder is open
+ * at a time so every folder stays on screen as a drop target. Drag a workspace
+ * onto a folder to move it (long-press first on touch screens), or long-press
+ * it and tap a folder.
  */
 export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginSidebarItemProps) {
   const toast = useToast();
   const folders = useFolders();
-  useAutoImport(folders);
-  const { agents } = useTopLevelAgents();
+  const { workspaces, loading } = useDirectory();
+  useAutoImport(folders, workspaces, !loading);
   const [expanded, setExpanded] = useState(true);
-  const [toggled, setToggled] = useState<ReadonlySet<string>>(new Set());
-  const [moving, setMoving] = useState<ListedAgent | null>(null);
-  const [drag, setDrag] = useState<DragState | null>(null);
+  const [openFolder, setOpenFolder] = useState<string | null>(null);
+  const [moving, setMoving] = useState<ListedWorkspace | null>(null);
+  const [drag, setDrag] = useState<{ ws: ListedWorkspace; y: number } | null>(null);
   const [hoverId, setHoverId] = useState<string | null>(null);
   const container = useRef<View | null>(null);
   const containerTop = useRef(0);
   const folderViews = useRef(new Map<string, View | null>());
   const folderRects = useRef(new Map<string, Rect>());
-  const dragAgent = useRef<ListedAgent | null>(null);
+  const dragging = useRef<ListedWorkspace | null>(null);
   const ready = folders.status === "ready" ? folders : null;
 
   const byFolder = useMemo(() => {
-    const map = new Map<string, ListedAgent[]>();
+    const map = new Map<string, ListedWorkspace[]>();
     if (!ready) return map;
-    for (const agent of agents) {
-      if (agent.archived) continue;
-      const id = folderOf(ready.doc, agent.id);
+    for (const ws of workspaces) {
+      const id = workspaceFolderOf(ready.doc, ws);
       const list = map.get(id) ?? [];
-      list.push(agent);
+      list.push(ws);
       map.set(id, list);
     }
-    for (const list of map.values()) list.sort(byRecentActivity);
     return map;
-  }, [ready, agents]);
+  }, [ready, workspaces]);
 
   const activeScreen = currentScreen?.screenId ?? null;
-  const openAgentId = activeScreen === "open" ? currentScreen?.params.agentId : null;
+  const openWorkspaceId = activeScreen === "open" ? currentScreen?.params.workspaceId : null;
   const muted = { color: theme.colors.foregroundMuted, fontSize: 12 };
+  const unsortedCount = byFolder.get(UNSORTED_ID)?.length ?? 0;
+  // With nothing chosen, show Unsorted open so new workspaces are easy to file.
+  const shownFolder = openFolder ?? (unsortedCount > 0 ? UNSORTED_ID : null);
 
-  // Unsorted starts open so new conversations are easy to file; folders start closed.
-  const isOpen = (id: string) => (id === UNSORTED_ID) !== toggled.has(id);
-  const toggle = (id: string) =>
-    setToggled((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-
-  async function moveTo(agent: ListedAgent, folderId: string, folderName: string) {
-    if (!ready) return;
-    if (folderOf(ready.doc, agent.id) === folderId) return;
-    const ok = await ready.update((d) => moveAgent(d, agent.id, folderId));
+  async function moveTo(ws: ListedWorkspace, folderId: string, folderName: string) {
+    if (!ready || workspaceFolderOf(ready.doc, ws) === folderId) return;
+    const ok = await ready.update((d) => moveWorkspace(d, ws.id, folderId));
     debugLog("drop", { ok, unsorted: folderId === UNSORTED_ID });
-    if (!ok) {
-      toast.error("Could not move. Try again.");
-      return;
-    }
-    toast.show(`Moved to ${folderName}`, { variant: "success" });
-    refreshFolderPills();
+    if (!ok) toast.error("Could not move. Try again.");
+    else toast.show(`Moved to ${folderName}`, { variant: "success" });
   }
+
+  const nameOf = (folderId: string) =>
+    folderId === UNSORTED_ID ? "Unsorted" : ready?.doc.folders.find((f) => f.id === folderId)?.name ?? "";
 
   const hitTest = (x: number, y: number): string | null => {
     for (const [id, r] of folderRects.current) {
@@ -102,40 +80,32 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
     return null;
   };
 
-  const measureTargets = () => {
-    folderRects.current.clear();
-    for (const [id, view] of folderViews.current) {
-      view?.measureInWindow((x, y, width, height) => {
-        folderRects.current.set(id, { x, y, width, height });
+  const dragApi: DragApi = {
+    start(ws, x, y) {
+      dragging.current = ws;
+      folderRects.current.clear();
+      for (const [id, view] of folderViews.current) {
+        view?.measureInWindow((rx, ry, width, height) => folderRects.current.set(id, { x: rx, y: ry, width, height }));
+      }
+      container.current?.measureInWindow((_x, cy) => {
+        containerTop.current = cy;
       });
-    }
-    container.current?.measureInWindow((_x, y) => {
-      containerTop.current = y;
-    });
-  };
-
-  const dragApi = {
-    start(agent: ListedAgent, x: number, y: number) {
-      dragAgent.current = agent;
-      measureTargets();
-      setDrag({ agent, x, y });
+      setDrag({ ws, y });
       debugLog("drag-start", { platform: Platform.OS, targets: folderViews.current.size, x, y });
     },
-    move(x: number, y: number) {
-      setDrag((d) => (d ? { ...d, x, y } : d));
+    move(x, y) {
+      setDrag((d) => (d ? { ...d, y } : d));
       setHoverId(hitTest(x, y));
     },
-    end(x: number | null, y: number | null) {
-      const agent = dragAgent.current;
-      dragAgent.current = null;
+    end(x, y) {
+      const ws = dragging.current;
+      dragging.current = null;
       const target = x === null || y === null ? null : hitTest(x, y);
-      debugLog("drag-end", { hit: target !== null, x, y, rects: folderRects.current.size });
+      debugLog("drag-end", { hit: target !== null, x, y });
       setDrag(null);
       setHoverId(null);
       setMoving(null);
-      if (!agent || !target || !ready) return;
-      const name = target === UNSORTED_ID ? "Unsorted" : ready.doc.folders.find((f) => f.id === target)?.name ?? "";
-      void moveTo(agent, target, name);
+      if (ws && target) void moveTo(ws, target, nameOf(target));
     },
   };
   const dragRef = useRef(dragApi);
@@ -159,7 +129,7 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
   );
   if (!ready || !expanded) return header;
 
-  const picking = moving ?? drag?.agent ?? null;
+  const picking = moving ?? drag?.ws ?? null;
   const groups = [{ id: UNSORTED_ID, name: "Unsorted" }, ...ready.doc.folders];
   return (
     <View ref={container} collapsable={false}>
@@ -174,11 +144,11 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
       ) : null}
       {groups.map((folder) => {
         const list = byFolder.get(folder.id) ?? [];
-        if (folder.id === UNSORTED_ID && list.length === 0 && !picking) return null;
-        const open = isOpen(folder.id);
-        const shown = open ? list.slice(0, MAX_ROWS_PER_FOLDER) : [];
         const isUnsorted = folder.id === UNSORTED_ID;
-        const hovered = hoverId === folder.id;
+        if (isUnsorted && list.length === 0 && !picking) return null;
+        const open = shownFolder === folder.id;
+        const shown = open ? list.slice(0, MAX_ROWS_PER_FOLDER) : [];
+        const running = list.some((ws) => ws.agents.some((a) => a.running));
         return (
           <Fragment key={folder.id}>
             <View
@@ -187,7 +157,7 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
               }}
               collapsable={false}
               style={
-                hovered
+                hoverId === folder.id
                   ? { backgroundColor: theme.colors.surface2, borderRadius: 6, borderWidth: 1, borderColor: theme.colors.accent }
                   : null
               }
@@ -199,33 +169,36 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
                 active={activeScreen === "folder" && currentScreen?.params.id === folder.id}
                 onPress={() => {
                   if (moving) {
-                    const agent = moving;
+                    const ws = moving;
                     setMoving(null);
-                    void moveTo(agent, folder.id, folder.name);
-                  } else toggle(folder.id);
+                    void moveTo(ws, folder.id, folder.name);
+                  } else setOpenFolder(open ? "" : folder.id);
                 }}
                 trailing={
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                    {running && !open ? <StatusIcon running attention={false} icon="Folder" theme={theme} size={12} /> : null}
                     <Text style={muted}>{list.length}</Text>
                     {picking
                       ? null
-                      : chevron(open, open ? `Collapse ${folder.name}` : `Expand ${folder.name}`, () => toggle(folder.id))}
+                      : chevron(open, open ? `Collapse ${folder.name}` : `Expand ${folder.name}`, () =>
+                          setOpenFolder(open ? "" : folder.id),
+                        )}
                   </View>
                 }
               />
             </View>
-            {shown.map((agent) => (
-              <ConversationRow
-                key={agent.id}
-                agent={agent}
+            {shown.map((ws) => (
+              <WorkspaceItem
+                key={ws.id}
+                ws={ws}
                 theme={theme}
-                active={openAgentId === agent.id}
-                lifted={picking?.id === agent.id}
+                active={openWorkspaceId === ws.id}
+                lifted={picking?.id === ws.id}
                 dragRef={dragRef}
-                onOpen={() => openScreen({ screenId: "open", params: { agentId: agent.id, name: agent.title } })}
+                onOpen={() => openScreen({ screenId: "open", params: { workspaceId: ws.id, name: ws.title } })}
                 onLongPress={() => {
                   debugLog("long-press", { platform: Platform.OS });
-                  setMoving(agent);
+                  setMoving(ws);
                 }}
               />
             ))}
@@ -258,7 +231,7 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
           }}
         >
           <Text numberOfLines={1} style={{ color: theme.colors.foreground, fontSize: 13 }}>
-            {drag.agent.title}
+            {drag.ws.title}
           </Text>
         </View>
       ) : null}
@@ -267,13 +240,14 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
 }
 
 interface DragApi {
-  start(agent: ListedAgent, x: number, y: number): void;
+  start(ws: ListedWorkspace, x: number, y: number): void;
   move(x: number, y: number): void;
   end(x: number | null, y: number | null): void;
 }
 
-function ConversationRow(props: {
-  agent: ListedAgent;
+/** A workspace row: status like Paseo's own list, its title, and how many conversations it holds. */
+function WorkspaceItem(props: {
+  ws: ListedWorkspace;
   theme: PluginTheme;
   active: boolean;
   lifted: boolean;
@@ -281,11 +255,10 @@ function ConversationRow(props: {
   onOpen(): void;
   onLongPress(): void;
 }) {
-  const { agent, theme, dragRef } = props;
+  const { ws, theme, dragRef } = props;
   const armed = useRef(false);
-  const latestAgent = useRef(agent);
-  latestAgent.current = agent;
-
+  const latest = useRef(ws);
+  latest.current = ws;
   const pan = useMemo(
     () =>
       PanResponder.create({
@@ -294,7 +267,7 @@ function ConversationRow(props: {
           armed.current || (Platform.OS === "web" && Math.abs(g.dx) + Math.abs(g.dy) > MOUSE_DRAG_SLOP),
         onPanResponderGrant: (_e, g) => {
           armed.current = true;
-          dragRef.current.start(latestAgent.current, g.moveX || g.x0, g.moveY || g.y0);
+          dragRef.current.start(latest.current, g.moveX || g.x0, g.moveY || g.y0);
         },
         onPanResponderMove: (_e, g) => dragRef.current.move(g.moveX, g.moveY),
         onPanResponderRelease: (_e, g) => {
@@ -309,7 +282,6 @@ function ConversationRow(props: {
       }),
     [dragRef],
   );
-
   const style = (state: PressableStateCallbackType) => {
     // React Native Web also reports hover; native platforms omit it.
     const hovered = (state as PressableStateCallbackType & { hovered?: boolean }).hovered;
@@ -326,11 +298,12 @@ function ConversationRow(props: {
       backgroundColor: props.active || state.pressed || hovered ? theme.colors.surface2 : "transparent",
     };
   };
+  const count = ws.agents.length;
   return (
     <View {...pan.panHandlers} collapsable={false}>
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={agent.title}
+        accessibilityLabel={ws.title}
         accessibilityHint="Drag onto a folder, or long press and then tap a folder"
         onPress={props.onOpen}
         onLongPress={() => {
@@ -338,7 +311,6 @@ function ConversationRow(props: {
           props.onLongPress();
         }}
         onPressOut={() => {
-          // A long press without a drag leaves tap-to-move mode on; it does not arm a later press.
           if (!armed.current) return;
           setTimeout(() => {
             armed.current = false;
@@ -347,10 +319,17 @@ function ConversationRow(props: {
         delayLongPress={350}
         style={style}
       >
-        <Icon name="MessageSquare" size={13} color={theme.colors.foregroundMuted} />
+        <StatusIcon
+          running={ws.agents.some((a) => a.running)}
+          attention={ws.agents.some((a) => a.attention)}
+          icon={count > 1 ? "MessagesSquare" : "MessageSquare"}
+          theme={theme}
+          size={13}
+        />
         <Text numberOfLines={1} style={{ flex: 1, color: theme.colors.foreground, fontSize: 13 }}>
-          {agent.title}
+          {ws.title}
         </Text>
+        {count > 1 ? <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>{count}</Text> : null}
       </Pressable>
     </View>
   );

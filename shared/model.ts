@@ -13,7 +13,17 @@ export type Folder = z.infer<typeof FolderSchema>;
 export const FoldersDocumentSchema = z.object({
   /** Display order is array order. */
   folders: z.array(FolderSchema).default([]),
-  /** Agent ID -> folder ID. */
+  /**
+   * Workspace ID -> folder ID, or UNSORTED_ID when the user took it out of every
+   * folder. Folders hold workspaces, as Paseo's own sidebar does.
+   */
+  workspaceAssignments: z.record(z.string(), z.string()).default({}),
+  /** Workspaces the user placed by hand. */
+  workspaceManual: z.record(z.string(), z.boolean()).default({}),
+  /**
+   * Agent ID -> folder ID, usually from a suggestions file. A workspace without
+   * its own placement goes where most of its conversations point.
+   */
   assignments: z.record(z.string(), z.string()).default({}),
   /** Agents the user placed by hand. Imported suggestions never move them. */
   manual: z.record(z.string(), z.boolean()).default({}),
@@ -81,8 +91,120 @@ export interface ListedAgent {
   workspaceId: string;
   workspaceName: string;
   archived: boolean;
+  /** A turn is in progress. */
+  running: boolean;
+  /** Paseo flagged it for the user: finished, failed, or waiting on a permission. */
+  attention: boolean;
   /** ISO time used for sorting: last user message, else last update. */
   activityAt: string;
+}
+
+/** An active workspace and its active top-level conversations, newest first. */
+export interface ListedWorkspace {
+  id: string;
+  title: string;
+  agents: ListedAgent[];
+  activityAt: string;
+}
+
+export function byRecentActivity<T extends { activityAt: string }>(a: T, b: T): number {
+  return b.activityAt.localeCompare(a.activityAt);
+}
+
+export function groupWorkspaces(
+  agents: readonly ListedAgent[],
+  workspaceTitles: ReadonlyMap<string, string>,
+): ListedWorkspace[] {
+  const byId = new Map<string, ListedAgent[]>();
+  for (const agent of agents) {
+    if (agent.archived || !agent.workspaceId) continue;
+    const list = byId.get(agent.workspaceId) ?? [];
+    list.push(agent);
+    byId.set(agent.workspaceId, list);
+  }
+  const out: ListedWorkspace[] = [];
+  for (const [id, list] of byId) {
+    list.sort(byRecentActivity);
+    const title = workspaceTitles.get(id)?.trim() || list[0].title || list[0].workspaceName || "Untitled";
+    out.push({ id, title, agents: list, activityAt: list[0].activityAt });
+  }
+  return out.sort(byRecentActivity);
+}
+
+/**
+ * The folder a workspace shows in: the user's own placement if any; else, for a
+ * workspace holding several conversations and named like a folder, that folder;
+ * else the folder most of its conversations point to (ties go to the newest).
+ */
+export function workspaceFolderOf(doc: FoldersDocument, ws: Pick<ListedWorkspace, "id" | "title" | "agents">): string {
+  const explicit = doc.workspaceAssignments[ws.id];
+  if (explicit === UNSORTED_ID || (explicit && doc.folders.some((f) => f.id === explicit))) return explicit;
+  const named = doc.folders.find((f) => f.name === ws.title.trim());
+  if (named && ws.agents.length > 1) return named.id;
+  const votes = new Map<string, number>();
+  for (const agent of ws.agents) {
+    const id = folderOf(doc, agent.id);
+    if (id !== UNSORTED_ID) votes.set(id, (votes.get(id) ?? 0) + 1);
+  }
+  let best: string | null = null;
+  let bestVotes = 0;
+  for (const agent of ws.agents) {
+    const id = folderOf(doc, agent.id);
+    const n = votes.get(id) ?? 0;
+    if (id !== UNSORTED_ID && n > bestVotes) {
+      best = id;
+      bestVotes = n;
+    }
+  }
+  return best ?? named?.id ?? UNSORTED_ID;
+}
+
+export function moveWorkspace(doc: FoldersDocument, workspaceId: string, folderId: string): FoldersDocument {
+  return {
+    ...doc,
+    workspaceAssignments: { ...doc.workspaceAssignments, [workspaceId]: folderId },
+    workspaceManual: { ...doc.workspaceManual, [workspaceId]: true },
+  };
+}
+
+export function countWorkspacesByFolder(
+  doc: FoldersDocument,
+  workspaces: readonly ListedWorkspace[],
+): Record<string, number> {
+  const counts: Record<string, number> = { [UNSORTED_ID]: 0 };
+  for (const f of doc.folders) counts[f.id] = 0;
+  for (const ws of workspaces) {
+    const id = workspaceFolderOf(doc, ws);
+    counts[id] = (counts[id] ?? 0) + 1;
+  }
+  return counts;
+}
+
+/**
+ * A suggestion forced for an agent re-files its workspace too when that
+ * workspace holds only this conversation.
+ */
+export function applyForcedToWorkspaces(
+  doc: FoldersDocument,
+  forcedAgentIds: readonly string[],
+  workspaces: readonly ListedWorkspace[],
+): FoldersDocument {
+  let next = doc;
+  for (const agentId of forcedAgentIds) {
+    const ws = workspaces.find((w) => w.agents.length === 1 && w.agents[0].id === agentId);
+    if (!ws) continue;
+    const target = folderOf(next, agentId);
+    if (next.workspaceAssignments[ws.id] !== target) next = moveWorkspace(next, ws.id, target);
+  }
+  return next;
+}
+
+/** Case-insensitive match on the workspace title, its conversation titles and their notes. */
+export function matchesWorkspace(ws: ListedWorkspace, notes: Record<string, string>, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  if (ws.title.toLowerCase().includes(q)) return true;
+  return ws.agents.some((a) => a.title.toLowerCase().includes(q) || (notes[a.id] ?? "").toLowerCase().includes(q));
 }
 
 export function newFolderId(existing: readonly Folder[]): string {
@@ -97,16 +219,6 @@ export function newFolderId(existing: readonly Folder[]): string {
 export function folderOf(doc: FoldersDocument, agentId: string): string {
   const id = doc.assignments[agentId];
   return id && doc.folders.some((f) => f.id === id) ? id : UNSORTED_ID;
-}
-
-export function countByFolder(doc: FoldersDocument, agents: readonly ListedAgent[]): Record<string, number> {
-  const counts: Record<string, number> = { [UNSORTED_ID]: 0 };
-  for (const f of doc.folders) counts[f.id] = 0;
-  for (const a of agents) {
-    const id = folderOf(doc, a.id);
-    counts[id] = (counts[id] ?? 0) + 1;
-  }
-  return counts;
 }
 
 export function moveAgent(doc: FoldersDocument, agentId: string, folderId: string): FoldersDocument {
@@ -128,7 +240,7 @@ export function renameFolder(doc: FoldersDocument, folderId: string, name: strin
   return { ...doc, folders: doc.folders.map((f) => (f.id === folderId ? { ...f, name: trimmed } : f)) };
 }
 
-/** Deleting a folder sends its agents back to Unsorted and lets imports place them again. */
+/** Deleting a folder sends its workspaces and agents back to Unsorted and lets imports place them again. */
 export function deleteFolder(doc: FoldersDocument, folderId: string): FoldersDocument {
   const assignments: Record<string, string> = {};
   const manual = { ...doc.manual };
@@ -136,7 +248,20 @@ export function deleteFolder(doc: FoldersDocument, folderId: string): FoldersDoc
     if (id === folderId) delete manual[agentId];
     else assignments[agentId] = id;
   }
-  return { ...doc, folders: doc.folders.filter((f) => f.id !== folderId), assignments, manual };
+  const workspaceAssignments: Record<string, string> = {};
+  const workspaceManual = { ...doc.workspaceManual };
+  for (const [workspaceId, id] of Object.entries(doc.workspaceAssignments)) {
+    if (id === folderId) delete workspaceManual[workspaceId];
+    else workspaceAssignments[workspaceId] = id;
+  }
+  return {
+    ...doc,
+    folders: doc.folders.filter((f) => f.id !== folderId),
+    assignments,
+    manual,
+    workspaceAssignments,
+    workspaceManual,
+  };
 }
 
 export function moveFolder(doc: FoldersDocument, folderId: string, delta: -1 | 1): FoldersDocument {
@@ -199,13 +324,3 @@ export function mergeSuggestions(doc: FoldersDocument, s: Suggestions, now: stri
   };
 }
 
-/** Case-insensitive match on title, workspace name and note. */
-export function matchesQuery(agent: ListedAgent, note: string, query: string): boolean {
-  const q = query.trim().toLowerCase();
-  if (!q) return true;
-  return [agent.title, agent.workspaceName, note].some((t) => t.toLowerCase().includes(q));
-}
-
-export function byRecentActivity(a: ListedAgent, b: ListedAgent): number {
-  return b.activityAt.localeCompare(a.activityAt);
-}

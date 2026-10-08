@@ -5,45 +5,44 @@ import { useEffect, useMemo, useState } from "react";
 import { ScrollView, Text, TextInput, View } from "react-native";
 import {
   addFolder,
-  byRecentActivity,
-  countByFolder,
+  countWorkspacesByFolder,
   deleteFolder,
   type Folder,
   type FoldersDocument,
-  folderOf,
-  type ListedAgent,
-  matchesQuery,
-  moveAgent,
+  type ListedWorkspace,
+  matchesWorkspace,
   moveFolder,
+  moveWorkspace,
   readSuggestionsRpc,
   renameFolder,
   UNSORTED_ID,
+  workspaceFolderOf,
 } from "../shared/model";
-import { importSuggestions, openPluginScreen, useFolders, useTopLevelAgents } from "./data";
-import { AgentRow, Button, MoveModal, SearchBox, type Styles, useStyles } from "./ui";
+import { importSuggestions, openPluginScreen, useDirectory, useFolders } from "./data";
+import { Button, MoveModal, SearchBox, type Styles, useStyles, WorkspaceRow } from "./ui";
 
-/** Manage folders, search every conversation, and import suggestions. */
+/** Manage folders, search every workspace, and import suggestions. */
 export function OverviewScreen({ theme, layout, navigation }: PluginScreenProps) {
   const styles = useStyles(theme, layout.compact);
   const toast = useToast();
   const folders = useFolders();
-  const { agents, loading, error } = useTopLevelAgents();
+  const { workspaces, loading, error } = useDirectory();
   const readSuggestions = useRpc(readSuggestionsRpc);
   const [query, setQuery] = useState("");
   const [newName, setNewName] = useState("");
-  const [moving, setMoving] = useState<ListedAgent | null>(null);
+  const [moving, setMoving] = useState<ListedWorkspace | null>(null);
   const [importStatus, setImportStatus] = useState("");
 
   const ready = folders.status === "ready" ? folders : null;
-  const counts = useMemo(() => (ready ? countByFolder(ready.doc, agents) : {}), [ready, agents]);
+  const counts = useMemo(() => (ready ? countWorkspacesByFolder(ready.doc, workspaces) : {}), [ready, workspaces]);
   const results = useMemo(() => {
     if (!ready || !query.trim()) return [];
-    return agents.filter((a) => matchesQuery(a, ready.doc.notes[a.id] ?? "", query)).sort(byRecentActivity);
-  }, [ready, agents, query]);
+    return workspaces.filter((ws) => matchesWorkspace(ws, ready.doc.notes, query));
+  }, [ready, workspaces, query]);
 
   async function runImport() {
     if (!ready) return;
-    const outcome = await importSuggestions(readSuggestions, ready);
+    const outcome = await importSuggestions(readSuggestions, ready, workspaces);
     setImportStatus(outcome.message);
     toast.show(outcome.message, { variant: outcome.ok ? "success" : "error" });
   }
@@ -70,18 +69,18 @@ export function OverviewScreen({ theme, layout, navigation }: PluginScreenProps)
         {query.trim() ? (
           <>
             <Text style={styles.sectionTitle}>{loading ? "Loading…" : `${results.length} results`}</Text>
-            {results.map((agent) => {
-              const id = folderOf(doc, agent.id);
+            {results.map((ws) => {
+              const id = workspaceFolderOf(doc, ws);
               return (
-                <AgentRow
-                  key={agent.id}
-                  agent={agent}
-                  note={doc.notes[agent.id] ?? ""}
+                <WorkspaceRow
+                  key={ws.id}
+                  workspace={ws}
+                  notes={doc.notes}
                   folderName={id === UNSORTED_ID ? "Unsorted" : doc.folders.find((f) => f.id === id)?.name}
                   styles={styles}
                   theme={theme}
-                  onOpen={navigation ? () => navigation.openAgent({ agentId: agent.id }) : undefined}
-                  onMove={() => setMoving(agent)}
+                  onOpen={navigation ? () => navigation.openWorkspace({ workspaceId: ws.id }) : undefined}
+                  onMove={() => setMoving(ws)}
                 />
               );
             })}
@@ -157,11 +156,11 @@ export function OverviewScreen({ theme, layout, navigation }: PluginScreenProps)
         open={moving !== null}
         onOpenChange={(open) => (open ? null : setMoving(null))}
         folders={doc.folders}
-        currentId={moving ? folderOf(doc, moving.id) : UNSORTED_ID}
+        currentId={moving ? workspaceFolderOf(doc, moving) : UNSORTED_ID}
         onPick={(id) => {
-          const agent = moving;
+          const ws = moving;
           setMoving(null);
-          if (agent) void save((d) => moveAgent(d, agent.id, id));
+          if (ws) void save((d) => moveWorkspace(d, ws.id, id));
         }}
         styles={styles}
         theme={theme}
