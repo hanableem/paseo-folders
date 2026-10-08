@@ -67,6 +67,13 @@ export const readFoldersRpc = defineRpc({
   output: FoldersDocumentSchema,
 });
 
+/** Temporary interaction log while drag and drop is being tuned; prints to the plugin log only. */
+export const debugLogRpc = defineRpc({
+  name: "debug.log",
+  input: z.object({ event: z.string().max(60), data: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])).default({}) }),
+  output: z.object({ ok: z.boolean() }),
+});
+
 export interface ListedAgent {
   id: string;
   title: string;

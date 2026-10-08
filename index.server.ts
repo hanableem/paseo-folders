@@ -1,5 +1,5 @@
 import type { PluginServerContext } from "@getpaseo/plugin/server";
-import { FoldersDocumentSchema, foldersSettings, readFoldersRpc, readSuggestionsRpc } from "./shared/model";
+import { debugLogRpc, FoldersDocumentSchema, foldersSettings, readFoldersRpc, readSuggestionsRpc } from "./shared/model";
 import { readSuggestions } from "./server/suggestions";
 
 export default function contribute(server: PluginServerContext) {
@@ -9,6 +9,10 @@ export default function contribute(server: PluginServerContext) {
   server.handle(readFoldersRpc, async () => {
     const state = await settings.read();
     return state.status === "ready" ? state.values : FoldersDocumentSchema.parse({});
+  });
+  server.handle(debugLogRpc, ({ event, data }) => {
+    console.log(`[folders-debug] ${event} ${JSON.stringify(data)}`);
+    return { ok: true };
   });
   return () => {};
 }

@@ -2,6 +2,7 @@ import type { PluginClientContext, PluginOpenScreenInput } from "@getpaseo/plugi
 import { usePaseo, useRpc, useSettings } from "@getpaseo/plugin/client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  debugLogRpc,
   type FoldersDocument,
   foldersSettings,
   type ListedAgent,
@@ -19,6 +20,11 @@ let pluginClient: PluginClientContext | null = null;
 
 export function setPluginClient(client: PluginClientContext | null): void {
   pluginClient = client;
+}
+
+/** Fire-and-forget interaction log for tuning; never includes titles or notes. */
+export function debugLog(event: string, data: Record<string, string | number | boolean | null> = {}): void {
+  void pluginClient?.rpc(debugLogRpc, { event, data }).catch(() => undefined);
 }
 
 /** Screens receive no `openScreen`, so they go through the registered client. */
