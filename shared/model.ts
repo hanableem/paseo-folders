@@ -61,6 +61,12 @@ export const readSuggestionsRpc = defineRpc({
   }),
 });
 
+export const readFoldersRpc = defineRpc({
+  name: "folders.read",
+  input: z.object({}),
+  output: FoldersDocumentSchema,
+});
+
 export interface ListedAgent {
   id: string;
   title: string;
