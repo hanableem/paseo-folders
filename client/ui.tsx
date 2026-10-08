@@ -104,9 +104,11 @@ export function AgentRow(props: {
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`Open ${title}`}
+        accessibilityHint="Long press to move it to another folder"
         style={styles.rowMain}
-        disabled={!props.onOpen}
         onPress={props.onOpen}
+        onLongPress={props.onMove}
+        delayLongPress={400}
       >
         <Text style={styles.title} numberOfLines={1}>
           {title}
