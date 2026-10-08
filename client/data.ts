@@ -37,15 +37,23 @@ export function openPluginScreen(input: PluginOpenScreenInput): void {
 
 export type PaseoApi = ReturnType<typeof usePaseo>;
 
+export interface WorkspaceMeta {
+  title: string;
+  directory: string;
+  branch: string;
+}
+
 export interface Directory {
   /** Every top-level agent, archived ones included. Subagents are left out. */
   agents: ListedAgent[];
   workspaceTitles: Map<string, string>;
+  workspaceMeta: Map<string, WorkspaceMeta>;
 }
 
 /** Lists agents and workspace titles. Used by hooks and by the header-button controller. */
 export async function fetchDirectory(paseo: PaseoApi): Promise<Directory> {
-  const workspaceTitles = await listWorkspaceTitles(paseo);
+  const workspaceMeta = await listWorkspaceMeta(paseo);
+  const workspaceTitles = titlesOf(workspaceMeta);
   const agents: ListedAgent[] = [];
   let cursor: string | undefined;
   for (let page = 0; page < MAX_PAGES; page += 1) {
@@ -76,12 +84,18 @@ export async function fetchDirectory(paseo: PaseoApi): Promise<Directory> {
     if (!result.pageInfo.hasMore || !next) break;
     cursor = next;
   }
-  return { agents, workspaceTitles };
+  return { agents, workspaceTitles, workspaceMeta };
 }
 
-/** Workspace ID -> title. Archived workspaces may be missing; callers fall back to agent titles. */
-async function listWorkspaceTitles(paseo: PaseoApi): Promise<Map<string, string>> {
+function titlesOf(meta: Map<string, WorkspaceMeta>): Map<string, string> {
   const titles = new Map<string, string>();
+  for (const [id, m] of meta) if (m.title) titles.set(id, m.title);
+  return titles;
+}
+
+/** Workspace ID -> title, directory and branch. Archived workspaces may be missing. */
+async function listWorkspaceMeta(paseo: PaseoApi): Promise<Map<string, WorkspaceMeta>> {
+  const meta = new Map<string, WorkspaceMeta>();
   try {
     let cursor: string | undefined;
     for (let page = 0; page < MAX_PAGES; page += 1) {
@@ -89,21 +103,25 @@ async function listWorkspaceTitles(paseo: PaseoApi): Promise<Map<string, string>
         page: cursor ? { limit: PAGE_SIZE, cursor } : { limit: PAGE_SIZE },
       });
       for (const ws of result.entries) {
-        const title = ws.title?.trim();
-        if (title) titles.set(ws.id, title);
+        meta.set(ws.id, {
+          title: ws.title?.trim() ?? "",
+          directory: ws.workspaceDirectory ?? ws.projectRootPath ?? "",
+          branch: ws.gitRuntime?.currentBranch ?? "",
+        });
       }
       const next = result.pageInfo?.nextCursor;
       if (!result.pageInfo?.hasMore || !next) break;
       cursor = next;
     }
   } catch {
-    // Titles are cosmetic; workspaces still list with their conversation titles.
+    // Titles and paths are extras; workspaces still list with their conversation titles.
   }
-  return titles;
+  return meta;
 }
 
 export interface DirectoryState {
   agents: ListedAgent[];
+  workspaceMeta: Map<string, WorkspaceMeta>;
   /** Active workspaces with their active conversations, newest first. */
   workspaces: ListedWorkspace[];
   loading: boolean;
@@ -156,7 +174,7 @@ export function useDirectory(): DirectoryState {
   const paseoRef = useRef(paseo);
   paseoRef.current = paseo;
   const [agentMap, setAgentMap] = useState<ReadonlyMap<string, ListedAgent>>(new Map());
-  const [workspaceTitles, setWorkspaceTitles] = useState<Map<string, string>>(new Map());
+  const [workspaceMeta, setWorkspaceMeta] = useState<Map<string, WorkspaceMeta>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [generation, setGeneration] = useState(0);
@@ -224,7 +242,7 @@ export function useDirectory(): DirectoryState {
       try {
         const full = await fetchDirectory(paseoRef.current);
         if (stopped) return;
-        setWorkspaceTitles(full.workspaceTitles);
+        setWorkspaceMeta(full.workspaceMeta);
         for (const agent of full.agents) if (!map.has(agent.id)) map.set(agent.id, agent);
         flush();
         setLoading(false);
@@ -244,9 +262,9 @@ export function useDirectory(): DirectoryState {
   }, [generation]);
 
   const agents = useMemo(() => [...agentMap.values()], [agentMap]);
-  const workspaces = useMemo(() => groupWorkspaces(agents, workspaceTitles), [agents, workspaceTitles]);
+  const workspaces = useMemo(() => groupWorkspaces(agents, titlesOf(workspaceMeta)), [agents, workspaceMeta]);
   const reload = useCallback(async () => setGeneration((g) => g + 1), []);
-  return { agents, workspaces, loading, error, reload };
+  return { agents, workspaceMeta, workspaces, loading, error, reload };
 }
 
 export type ReadyFolders = Extract<FoldersState, { status: "ready" }>;

@@ -1,12 +1,13 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 import { usePaseo } from "@getpaseo/plugin/client";
 import { copyText, Icon, useToast } from "@getpaseo/plugin/client/react-native";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Dimensions, Platform, Pressable, type PressableStateCallbackType, Text, TextInput, View } from "react-native";
 import { type ListedWorkspace, moveWorkspace, resumeCommand, UNSORTED_ID, workspaceFolderOf } from "../shared/model";
-import type { ReadyFolders } from "./data";
+import type { ReadyFolders, WorkspaceMeta } from "./data";
+import { listenOutsidePress, nodeContains } from "./web-dom";
 
-type Page = "main" | "move" | "rename" | "archive";
+type Page = "main" | "move" | "rename";
 
 /** Where the pointer was, in window coordinates. */
 export interface MenuPoint {
@@ -30,39 +31,45 @@ export function tint(hex: string, alpha: number): string {
 }
 
 /**
- * Right-click (or long-press) menu for a workspace row, styled after Paseo's
- * tab menu and opened at the pointer: open, move to a folder, rename, copy the
- * resume command or agent id, archive.
+ * Right-click (or long-press) menu for a workspace row. It follows Paseo's own
+ * workspace menu (copy path and branch, rename, archive), puts Move to folder
+ * where Paseo has Labels, and adds the tab menu's copy commands for a workspace
+ * holding a single conversation.
  */
 export function RowMenu(props: {
   ws: ListedWorkspace;
+  meta: WorkspaceMeta | undefined;
   at: MenuPoint;
   /** Horizontal room the sidebar leaves, in window coordinates; the menu stays inside it. */
   bounds: { left: number; width: number } | null;
   theme: PluginTheme;
   folders: ReadyFolders;
-  onOpen(): void;
   onClose(): void;
 }) {
-  const { ws, theme, folders } = props;
+  const { ws, meta, theme, folders, onClose } = props;
   const paseo = usePaseo();
   const toast = useToast();
   const [page, setPage] = useState<Page>("main");
   const [draft, setDraft] = useState(ws.title);
+  const surface = useRef<View | null>(null);
   const single = ws.agents.length === 1 ? ws.agents[0] : null;
   const resume = single ? resumeCommand(single.provider, single.sessionId) : null;
   const current = workspaceFolderOf(folders.doc, ws);
   const c = theme.colors;
 
+  // Close on any press, right-click or Escape elsewhere in the window.
+  useEffect(() => listenOutsidePress((target) => nodeContains(surface.current, target), onClose), [onClose]);
+
   async function act(work: () => Promise<unknown>, done: string, failed: string) {
     try {
       await work();
       toast.show(done, { variant: "success" });
-      props.onClose();
+      onClose();
     } catch {
       toast.error(failed);
     }
   }
+  const copy = (text: string, done: string) => void act(() => copyText(text), done, "Could not copy.");
 
   const itemStyle = (state: PressableStateCallbackType) => {
     const hovered = (state as PressableStateCallbackType & { hovered?: boolean }).hovered;
@@ -80,7 +87,7 @@ export function RowMenu(props: {
       backgroundColor: hovered || state.pressed ? c.surface2 : "transparent",
     };
   };
-  const item = (key: string, icon: string, label: string, onPress: () => void, trailing?: string) => (
+  const item = (key: string, icon: string, label: string, onPress: () => void, trailing?: ReactNode) => (
     <Pressable key={key} accessibilityRole="menuitem" accessibilityLabel={label} onPress={onPress} style={itemStyle}>
       <View style={{ width: 16, alignItems: "center", justifyContent: "center" }}>
         <Icon name={icon} size={16} color={c.foreground} />
@@ -88,18 +95,15 @@ export function RowMenu(props: {
       <Text style={{ flexShrink: 1, minWidth: 0, color: c.foreground, fontSize: 14, lineHeight: 18 }} numberOfLines={1}>
         {label}
       </Text>
-      {trailing ? (
-        <View style={{ marginLeft: "auto", alignItems: "center", justifyContent: "center" }}>
-          <Text style={{ color: c.foregroundMuted, fontSize: 12 }}>{trailing}</Text>
-        </View>
-      ) : null}
+      {trailing ? <View style={{ marginLeft: "auto", alignItems: "center", justifyContent: "center" }}>{trailing}</View> : null}
     </Pressable>
   );
   const separator = (key: string) => <View key={key} style={{ height: 1, backgroundColor: c.border, marginVertical: 4 }} />;
   const back = item("back", "ChevronLeft", ws.title, () => setPage("main"));
+  const chevron = <Icon name="ChevronRight" size={14} color={c.foregroundMuted} />;
 
   let body: ReactNode;
-  let rows = 7;
+  let rows: number;
   if (page === "move") {
     const choices = [...folders.doc.folders, { id: UNSORTED_ID, name: "Unsorted" }];
     rows = choices.length + 1;
@@ -154,51 +158,26 @@ export function RowMenu(props: {
         {item("save", "Check", "Save", save)}
       </>
     );
-  } else if (page === "archive") {
-    rows = 4;
-    body = (
-      <>
-        {back}
-        {separator("s1")}
-        <Text style={{ color: c.foregroundMuted, fontSize: 12, paddingHorizontal: 12, paddingVertical: 4 }}>
-          Archive this workspace? Its conversations stay in History and can be restored.
-        </Text>
-        {item("confirm", "Archive", "Archive", () =>
-          void act(() => paseo.workspaces.archive(ws.id), "Archived", "Could not archive."),
-        )}
-      </>
-    );
   } else {
-    body = (
-      <>
-        {item("open", "ExternalLink", "Open", () => {
-          props.onOpen();
-          props.onClose();
-        })}
-        {item("move", "FolderInput", "Move to folder", () => setPage("move"), "›")}
-        {item("rename", "Pencil", "Rename", () => {
-          setDraft(ws.title);
-          setPage("rename");
-        })}
-        {resume || single ? separator("s1") : null}
-        {resume
-          ? item("resume", "Copy", "Copy resume command", () =>
-              void act(() => copyText(resume), "Resume command copied", "Could not copy."),
-            )
-          : null}
-        {single
-          ? item(
-              "agent-id",
-              "Copy",
-              "Copy agent id",
-              () => void act(() => copyText(single.id), "Agent id copied", "Could not copy."),
-              single.id.slice(0, 7),
-            )
-          : null}
-        {separator("s2")}
-        {item("archive", "Archive", "Archive…", () => setPage("archive"))}
-      </>
+    const entries: ReactNode[] = [];
+    if (meta?.directory) entries.push(item("path", "Copy", "Copy path", () => copy(meta.directory, "Path copied")));
+    if (meta?.branch) entries.push(item("branch", "Copy", "Copy branch name", () => copy(meta.branch, "Branch name copied")));
+    if (resume) entries.push(item("resume", "Copy", "Copy resume command", () => copy(resume, "Resume command copied")));
+    if (single) entries.push(item("agent-id", "Copy", "Copy agent id", () => copy(single.id, "Agent id copied")));
+    entries.push(
+      item("rename", "Pencil", "Rename workspace", () => {
+        setDraft(ws.title);
+        setPage("rename");
+      }),
     );
+    entries.push(item("move", "FolderInput", "Move to folder", () => setPage("move"), chevron));
+    entries.push(
+      item("archive", "Archive", "Archive", () =>
+        void act(() => paseo.workspaces.archive(ws.id), "Archived", "Could not archive."),
+      ),
+    );
+    rows = entries.length;
+    body = <>{entries}</>;
   }
 
   // Paseo clips the sidebar, so keep the menu inside it, opening up or left near the edges.
@@ -209,17 +188,18 @@ export function RowMenu(props: {
   const height = rows * ITEM_HEIGHT + 8 + 9;
   const left = Math.max(minX, Math.min(props.at.x, maxX - width));
   const top = props.at.y + height > win.height - 8 ? Math.max(8, props.at.y - height) : props.at.y;
-  const closeOnContext = { onContextMenu: (e: { preventDefault?: () => void }) => (e.preventDefault?.(), props.onClose()) } as object;
 
   return (
     <>
-      <Pressable
-        accessibilityLabel="Close menu"
-        onPress={props.onClose}
-        style={{ position: layer, left: 0, top: 0, width: win.width, height: win.height, zIndex: 999 }}
-        {...closeOnContext}
-      />
+      {Platform.OS === "web" ? null : (
+        <Pressable
+          accessibilityLabel="Close menu"
+          onPress={onClose}
+          style={{ position: layer, left: 0, top: 0, width: win.width, height: win.height, zIndex: 999 }}
+        />
+      )}
       <View
+        ref={surface}
         accessibilityRole="menu"
         style={{
           position: layer,

@@ -2,14 +2,16 @@ import type { PluginTheme } from "@getpaseo/plugin";
 import type { PluginSidebarItemProps } from "@getpaseo/plugin/client";
 import { Icon, useToast } from "@getpaseo/plugin/client/react-native";
 import { SidebarRow } from "@getpaseo/plugin/client/ui";
-import { Fragment, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useMemo, useRef, useState } from "react";
 import {
   type GestureResponderEvent,
   PanResponder,
   Platform,
   Pressable,
   type PressableStateCallbackType,
+  ScrollView,
   Text,
+  useWindowDimensions,
   View,
 } from "react-native";
 import { type ListedWorkspace, moveWorkspace, UNSORTED_ID, workspaceBucket, workspaceFolderOf } from "../shared/model";
@@ -38,7 +40,9 @@ interface Rect {
 export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginSidebarItemProps) {
   const toast = useToast();
   const folders = useFolders();
-  const { workspaces, loading } = useDirectory();
+  const { workspaces, workspaceMeta, loading } = useDirectory();
+  const { height: windowHeight } = useWindowDimensions();
+  const closeMenu = useCallback(() => setMenu(null), []);
   useAutoImport(folders, workspaces, !loading);
   const [expanded, setExpanded] = useState(true);
   const [openFolder, setOpenFolder] = useState<string | null>(null);
@@ -162,6 +166,8 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
   return (
     <View ref={container} collapsable={false} style={menu ? { zIndex: 1000 } : null}>
       {header}
+      {/* Paseo's sidebar header does not scroll, so the folders scroll on their own when tall. */}
+      <ScrollView style={{ maxHeight: Math.max(240, windowHeight * 0.6) }} scrollEnabled={!drag}>
       {groups.map((folder) => {
         const list = byFolder.get(folder.id) ?? [];
         const isUnsorted = folder.id === UNSORTED_ID;
@@ -224,6 +230,7 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
           </Fragment>
         );
       })}
+      </ScrollView>
       {drag ? (
         <View
           pointerEvents="none"
@@ -249,12 +256,12 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
       {menu ? (
         <RowMenu
           ws={menu.ws}
+          meta={workspaceMeta.get(menu.ws.id)}
           at={menu.at}
           bounds={menu.bounds}
           theme={theme}
           folders={ready}
-          onOpen={() => openWorkspace(menu.ws)}
-          onClose={() => setMenu(null)}
+          onClose={closeMenu}
         />
       ) : null}
     </View>
