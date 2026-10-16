@@ -157,6 +157,14 @@ export function useMover(options: {
     [paseo],
   );
 
+  /**
+   * The title a workspace should have once `gone` have left it: a workspace named
+   * after one of them (as a split names it) takes the name of the newest one left.
+   * Null when it keeps its title.
+   */
+  const titleAfter = (ownTitle: string | undefined, gone: readonly ListedAgent[], rest: readonly ListedAgent[]) =>
+    ownTitle && rest.length > 0 && gone.some((a) => a.title === ownTitle) ? rest[0].title : null;
+
   const merge = useCallback(
     (sourceIn: ListedWorkspace, targetIn: ListedWorkspace, agentIds?: readonly string[]) =>
       guard(async (doc) => {
@@ -172,13 +180,13 @@ export function useMover(options: {
           toast.error(blocked);
           return false;
         }
-        const [from, to] = await placesOf([source.id, target.id]);
-        if (!from?.directory || !to?.directory) {
+        const [here, there] = await placesOf([source.id, target.id]);
+        if (!here?.directory || !there?.directory) {
           toast.error("Could not tell which projects these workspaces are in. Try again.");
           return false;
         }
-        if (!sameDirectory(from.directory, to.directory)) {
-          const [fromName, toName] = placeNames(from, to);
+        if (!sameDirectory(here.directory, there.directory)) {
+          const [fromName, toName] = placeNames(here, there);
           const stuck = chosen.filter((a) => a.provider.split("/")[0] !== "claude");
           if (stuck.length > 0) {
             const stay = stuck.length === 1 ? "stays" : "stay";
@@ -201,7 +209,7 @@ export function useMover(options: {
 
         // A workspace without a title of its own is listed under its newest conversation's.
         // Keep the name it had when the conversations were dropped on it.
-        if (!to.title && target.agents.length > 0) {
+        if (!there.title && target.agents.length > 0) {
           await paseo.workspaces
             .ref(target.id)
             .setTitle(target.title)
@@ -230,12 +238,16 @@ export function useMover(options: {
         if (moved.length > 0) {
           const gone = new Set(moved.map(({ from }) => from));
           const rest = source.agents.filter((a) => !gone.has(a.id));
+          const retitle = titleAfter(here.title, source.agents.filter((a) => gone.has(a.id)), rest);
+          if (retitle) await paseo.workspaces.ref(source.id).setTitle(retitle).catch(() => undefined);
           await save((d) => {
             let next = d;
             for (const { from, to } of moved) next = renameAgent(next, from, to);
             const agents = [...target.agents, ...moved.map(({ to }) => ({ id: to }))];
             next = keepFolder(next, { id: target.id, title: target.title, agents }, targetFolder);
-            if (rest.length > 0) next = keepFolder(next, { id: source.id, title: source.title, agents: rest }, sourceFolder);
+            if (rest.length > 0) {
+              next = keepFolder(next, { id: source.id, title: retitle ?? source.title, agents: rest }, sourceFolder);
+            }
             return next;
           });
         }
@@ -273,10 +285,14 @@ export function useMover(options: {
           return false;
         }
         latest.current.refresh();
+        const rest = source.agents.filter((a) => a.id !== agent.id);
+        const retitle = titleAfter(latest.current.meta.get(source.id)?.title, [agent], rest);
+        if (retitle) await paseo.workspaces.ref(source.id).setTitle(retitle).catch(() => undefined);
         await save((d) => {
           let next = renameAgent(d, agent.id, out.agentId);
-          const rest = source.agents.filter((a) => a.id !== agent.id);
-          if (rest.length > 0) next = keepFolder(next, { id: source.id, title: source.title, agents: rest }, folder);
+          if (rest.length > 0) {
+            next = keepFolder(next, { id: source.id, title: retitle ?? source.title, agents: rest }, folder);
+          }
           if (folderId !== undefined) return moveWorkspace(next, out.workspaceId, folderId);
           const made = { id: out.workspaceId, title: agent.title, agents: [{ id: out.agentId }] };
           return folder === UNSORTED_ID ? next : keepFolder(next, made, folder);
@@ -290,7 +306,7 @@ export function useMover(options: {
         latest.current.open(out.workspaceId, agent.title);
         return true;
       }),
-    [guard, toast, call, save],
+    [guard, toast, call, save, paseo],
   );
 
   return { busy, question, answer, merge, split };

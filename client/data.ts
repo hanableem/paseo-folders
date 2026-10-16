@@ -328,6 +328,15 @@ export function formatDay(iso: string): string {
   return `${d.getFullYear()}-${mm}-${dd}`;
 }
 
+/** Local date and time, to the minute. */
+export function formatTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  return `${formatDay(iso)} ${hh}:${mi}`;
+}
+
 type ReadSuggestions = ReturnType<typeof useRpc<typeof readSuggestionsRpc.input, typeof readSuggestionsRpc.output>>;
 
 export interface ImportOutcome {
