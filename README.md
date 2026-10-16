@@ -74,7 +74,7 @@ node scripts/move-agent.mjs <agent-id> <target-directory> --dry-run   # show wha
 node scripts/move-agent.mjs <agent-id> <target-directory>
 ```
 
-Before deleting anything, the script saves the agent as Paseo returned it under `<Paseo home>/paseo-folders/moves/`. If the import fails, it imports the session back into the old workspace. Folder placements are kept per agent ID, so a moved conversation shows under **Unsorted** until you file it again or the suggestions file names its new ID. One agent at a time: an agent that shares a workspace with others gets a workspace of its own.
+Before deleting anything, the script saves the agent as Paseo returned it under `<Paseo home>/paseo-folders/moves/`. If the import fails, it imports the session back into the old workspace. Folder placements are kept per agent ID, so a moved conversation shows under **Unsorted** until you file it again or the suggestions file names its new ID. One agent at a time: an agent that shares a workspace with others gets a workspace of its own. Loading the session can make Claude Code append its own bookkeeping lines to the transcript, and, if the session ended with background tasks still running, a notice that they stopped; no turn is run.
 
 ## Privacy
 
