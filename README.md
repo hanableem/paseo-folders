@@ -65,6 +65,17 @@ node scripts/split-agent.mjs <agent-id> "<new workspace title>"
 
 It uses Paseo's internal daemon client, the `paseo` CLI from `PATH` (or `PASEO_CLI`), and the daemon at `PASEO_WS_URL` (default `ws://127.0.0.1:6767/ws`). If the import fails, the agent stays archived and can be unarchived from History.
 
+## Move a conversation to another project (experimental)
+
+Paseo cannot change the directory a conversation runs in, so it cannot move one to another project. `scripts/move-agent.mjs` does it for an idle Claude agent: it creates a local workspace in the target directory, deletes the agent's Paseo record and imports its Claude session there. Claude Code resumes a session by ID from any directory and keeps writing to the transcript where the session started, so the history stays and the conversation can go on. The agent gets a new Paseo ID; its title, labels, mode, model and thinking option are carried over. If nothing else is left in the old workspace, it is archived and the new one takes its title and pin.
+
+```bash
+node scripts/move-agent.mjs <agent-id> <target-directory> --dry-run   # show what would move
+node scripts/move-agent.mjs <agent-id> <target-directory>
+```
+
+Before deleting anything, the script saves the agent as Paseo returned it under `<Paseo home>/paseo-folders/moves/`. If the import fails, it imports the session back into the old workspace. Folder placements are kept per agent ID, so a moved conversation shows under **Unsorted** until you file it again or the suggestions file names its new ID. One agent at a time: an agent that shares a workspace with others gets a workspace of its own.
+
 ## Privacy
 
 - No telemetry and no network requests of its own.
