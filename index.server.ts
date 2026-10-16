@@ -1,5 +1,13 @@
 import type { PluginServerContext } from "@getpaseo/plugin/server";
-import { debugLogRpc, FoldersDocumentSchema, foldersSettings, readFoldersRpc, readSuggestionsRpc } from "./shared/model";
+import {
+  debugLogRpc,
+  FoldersDocumentSchema,
+  foldersSettings,
+  moveConversationRpc,
+  readFoldersRpc,
+  readSuggestionsRpc,
+} from "./shared/model";
+import { moveConversation } from "./server/move";
 import { readSuggestions } from "./server/suggestions";
 
 export default function contribute(server: PluginServerContext) {
@@ -10,6 +18,7 @@ export default function contribute(server: PluginServerContext) {
     const state = await settings.read();
     return state.status === "ready" ? state.values : FoldersDocumentSchema.parse({});
   });
+  server.handle(moveConversationRpc, (input, { paseo }) => moveConversation(input, paseo));
   server.handle(debugLogRpc, ({ event, data }) => {
     console.log(`[folders-debug] ${event} ${JSON.stringify(data)}`);
     return { ok: true };

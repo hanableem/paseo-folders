@@ -82,6 +82,34 @@ export const readFoldersRpc = defineRpc({
   output: FoldersDocumentSchema,
 });
 
+/**
+ * Moves one conversation into another workspace, or into a new workspace in its
+ * own directory. Refusals come back as `ok: false` with a reason for the user.
+ */
+export const moveConversationRpc = defineRpc({
+  name: "conversation.move",
+  input: z.object({
+    agentId: z.string().min(1),
+    /** Null makes a new workspace in the conversation's own directory. */
+    targetWorkspaceId: z.string().min(1).nullable(),
+    /** Title for a new workspace. */
+    title: z.string().max(200).optional(),
+  }),
+  output: z.union([
+    z.object({
+      ok: z.literal(true),
+      /** The conversation's agent ID after the move; a new one when it changed directories. */
+      agentId: z.string(),
+      workspaceId: z.string(),
+      /** The workspace it left was empty afterwards and is archived. */
+      sourceArchived: z.boolean(),
+      /** Settings that could not be carried over, for the user; empty when all went well. */
+      note: z.string(),
+    }),
+    z.object({ ok: z.literal(false), reason: z.string() }),
+  ]),
+});
+
 /** Temporary interaction log while drag and drop is being tuned; prints to the plugin log only. */
 export const debugLogRpc = defineRpc({
   name: "debug.log",
@@ -176,12 +204,19 @@ export function groupWorkspaces(
   return out.sort(byRecentActivity);
 }
 
+/** What decides a workspace's folder: its own placement, its title and its conversations. */
+export interface FolderSubject {
+  id: string;
+  title: string;
+  agents: readonly { id: string }[];
+}
+
 /**
  * The folder a workspace shows in: the user's own placement if any; else, for a
  * workspace holding several conversations and named like a folder, that folder;
  * else the folder most of its conversations point to (ties go to the newest).
  */
-export function workspaceFolderOf(doc: FoldersDocument, ws: Pick<ListedWorkspace, "id" | "title" | "agents">): string {
+export function workspaceFolderOf(doc: FoldersDocument, ws: FolderSubject): string {
   const explicit = doc.workspaceAssignments[ws.id];
   if (explicit === UNSORTED_ID || (explicit && doc.folders.some((f) => f.id === explicit))) return explicit;
   const named = doc.folders.find((f) => f.name === ws.title.trim());
@@ -314,6 +349,43 @@ export function moveAgent(doc: FoldersDocument, agentId: string, folderId: strin
   if (folderId === UNSORTED_ID) delete assignments[agentId];
   else assignments[agentId] = folderId;
   return { ...doc, assignments, manual: { ...doc.manual, [agentId]: true } };
+}
+
+/** Carries a conversation's folder, hand placement and note over to the agent ID it got when it moved. */
+export function renameAgent(doc: FoldersDocument, from: string, to: string): FoldersDocument {
+  if (from === to) return doc;
+  const carry = <T>(record: Record<string, T>): Record<string, T> => {
+    if (!(from in record)) return record;
+    const next = { ...record, [to]: record[from] };
+    delete next[from];
+    return next;
+  };
+  return { ...doc, assignments: carry(doc.assignments), manual: carry(doc.manual), notes: carry(doc.notes) };
+}
+
+/**
+ * Keeps a workspace in the folder it showed in before conversations moved in or
+ * out of it, placing it there when its new conversations would point elsewhere.
+ */
+export function keepFolder(doc: FoldersDocument, ws: FolderSubject, folderId: string): FoldersDocument {
+  return workspaceFolderOf(doc, ws) === folderId ? doc : moveWorkspace(doc, ws.id, folderId);
+}
+
+/**
+ * Workspaces a workspace can merge into, matching the query: those in its own
+ * folder first, then the rest, newest first within each.
+ */
+export function mergeTargets(
+  doc: FoldersDocument,
+  workspaces: readonly ListedWorkspace[],
+  source: ListedWorkspace,
+  query: string,
+): ListedWorkspace[] {
+  const folder = workspaceFolderOf(doc, source);
+  const matches = workspaces.filter((ws) => ws.id !== source.id && matchesWorkspace(ws, doc.notes, query));
+  const near = matches.filter((ws) => workspaceFolderOf(doc, ws) === folder);
+  const far = matches.filter((ws) => workspaceFolderOf(doc, ws) !== folder);
+  return [...near.sort(byRecentActivity), ...far.sort(byRecentActivity)];
 }
 
 export function addFolder(doc: FoldersDocument, name: string): FoldersDocument {

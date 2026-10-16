@@ -4,6 +4,8 @@ Hover a folder and press + to make a new workspace already in that folder. It op
 
 To move a workspace, drag it onto another folder with the mouse, or right-click it (long-press on touch screens) and choose Move to folder. The same menu copies the path, branch, resume command and agent id, renames and archives. One folder is open at a time, so every folder stays on screen as a drop target.
 
+To put conversations together, drag a workspace onto another workspace and confirm, or choose Merge into workspace from its menu: its conversations become tabs in the other workspace, and the emptied one is archived. Split off a conversation does the reverse for a workspace holding several. Conversations keep their history; a running one waits until it has finished. Conversations from another project can join only if they are Claude conversations. This uses Paseo internals and is experimental.
+
 Workspaces that are in no folder appear under Unsorted, which opens by default when it has anything in it.
 
 Open Folders from the sidebar to create, rename, reorder or delete folders, and to search across every workspace and the conversations inside it. Deleting a folder moves its workspaces back to Unsorted; nothing is archived or deleted in Paseo.
@@ -26,4 +28,4 @@ Suggestions are per conversation. A workspace you have not placed yourself goes 
 
 ## Data and privacy
 
-Folder names, placements and notes are stored as Paseo plugin settings on the host, so every app connected to that host sees the same folders. Removing the plugin deletes them. The plugin reads the suggestions file and lists agents and workspaces through Paseo; it makes no other network requests.
+Folder names, placements and notes are stored as Paseo plugin settings on the host, so every app connected to that host sees the same folders. Removing the plugin deletes them. The plugin reads the suggestions file and lists agents and workspaces through Paseo. To merge and split workspaces it connects to the Paseo daemon on the host, and it saves a copy of each conversation that moves to another project under `<Paseo home>/paseo-folders/moves/`. It makes no other network requests.

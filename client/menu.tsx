@@ -3,11 +3,19 @@ import { usePaseo } from "@getpaseo/plugin/client";
 import { copyText, Icon, useToast } from "@getpaseo/plugin/client/react-native";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Dimensions, Platform, Pressable, type PressableStateCallbackType, Text, TextInput, View } from "react-native";
-import { type ListedWorkspace, moveWorkspace, resumeCommand, UNSORTED_ID, workspaceFolderOf } from "../shared/model";
+import {
+  type ListedWorkspace,
+  mergeTargets,
+  moveWorkspace,
+  resumeCommand,
+  UNSORTED_ID,
+  workspaceFolderOf,
+} from "../shared/model";
 import type { ReadyFolders, WorkspaceMeta } from "./data";
+import type { Mover } from "./move";
 import { listenOutsidePress, nodeContains } from "./web-dom";
 
-type Page = "main" | "move" | "rename";
+type Page = "main" | "move" | "rename" | "merge" | "split" | "confirm";
 
 /** Where the pointer was, in window coordinates. */
 export interface MenuPoint {
@@ -18,6 +26,8 @@ export interface MenuPoint {
 // Paseo's own menu metrics (desktop): 28 px items, 4 px page padding, 220 px wide.
 const MENU_WIDTH = 220;
 const ITEM_HEIGHT = 28;
+/** Workspaces listed under Merge into workspace; typing narrows them down. */
+const MAX_TARGETS = 7;
 
 /** On the web a fixed layer escapes the sidebar's layout, like Paseo's own menus. */
 const layer = (Platform.OS === "web" ? "fixed" : "absolute") as "absolute";
@@ -34,7 +44,8 @@ export function tint(hex: string, alpha: number): string {
  * Right-click (or long-press) menu for a workspace row. It follows Paseo's own
  * workspace menu (copy path and branch, rename, archive), puts Move to folder
  * where Paseo has Labels, and adds the tab menu's copy commands for a workspace
- * holding a single conversation.
+ * holding a single conversation. With a mover it also merges the workspace into
+ * another one and splits a conversation off into a workspace of its own.
  */
 export function RowMenu(props: {
   ws: ListedWorkspace;
@@ -44,14 +55,21 @@ export function RowMenu(props: {
   bounds: { left: number; width: number } | null;
   theme: PluginTheme;
   folders: ReadyFolders;
+  /** Every listed workspace, for Merge into workspace. */
+  workspaces?: readonly ListedWorkspace[];
+  /** Leave out to hide merging and splitting. */
+  mover?: Mover;
+  /** Opens on the question whether to merge into this workspace, as after a drop. */
+  confirmMerge?: ListedWorkspace;
   onClose(): void;
   onArchived?(workspaceId: string): void;
 }) {
-  const { ws, meta, theme, folders, onClose } = props;
+  const { ws, meta, theme, folders, mover, confirmMerge, onClose } = props;
   const paseo = usePaseo();
   const toast = useToast();
-  const [page, setPage] = useState<Page>("main");
+  const [page, setPage] = useState<Page>(confirmMerge ? "confirm" : "main");
   const [draft, setDraft] = useState(ws.title);
+  const [query, setQuery] = useState("");
   const surface = useRef<View | null>(null);
   const single = ws.agents.length === 1 ? ws.agents[0] : null;
   const resume = single ? resumeCommand(single.provider, single.sessionId) : null;
@@ -103,9 +121,95 @@ export function RowMenu(props: {
   const back = item("back", "ChevronLeft", ws.title, () => setPage("main"));
   const chevron = <Icon name="ChevronRight" size={14} color={c.foregroundMuted} />;
 
+  const folderName = (id: string) =>
+    id === UNSORTED_ID ? "Unsorted" : folders.doc.folders.find((f) => f.id === id)?.name ?? "";
+  const muted = { color: c.foregroundMuted, fontSize: 12 };
+  const quoted = (title: string) => `“${title}”`;
+  const conversations = (n: number) => (n === 1 ? "Its conversation becomes a tab" : `Its ${n} conversations become tabs`);
+  const mergeInto = (target: ListedWorkspace) => {
+    onClose();
+    if (mover) void mover.merge(ws, target);
+  };
+
   let body: ReactNode;
   let rows: number;
-  if (page === "move") {
+  if (page === "confirm" && confirmMerge) {
+    rows = 5;
+    body = (
+      <>
+        <View style={{ marginHorizontal: 12, paddingVertical: 6 }}>
+          <Text style={{ color: c.foreground, fontSize: 13, lineHeight: 18 }} numberOfLines={4}>
+            {`Merge ${quoted(ws.title)} into ${quoted(confirmMerge.title)}? ${conversations(ws.agents.length)} there.`}
+          </Text>
+        </View>
+        {separator("s1")}
+        {item("confirm", "Merge", "Merge", () => mergeInto(confirmMerge))}
+        {item("cancel", "X", "Cancel", onClose)}
+      </>
+    );
+  } else if (page === "merge") {
+    const targets = mergeTargets(folders.doc, props.workspaces ?? [], ws, query).slice(0, MAX_TARGETS);
+    rows = 3 + Math.max(1, targets.length);
+    body = (
+      <>
+        {back}
+        {separator("s1")}
+        <View style={{ marginHorizontal: 4, paddingVertical: 4 }}>
+          <TextInput
+            value={query}
+            onChangeText={setQuery}
+            autoFocus
+            placeholder="Search workspaces"
+            placeholderTextColor={c.foregroundMuted}
+            accessibilityLabel="Search workspaces"
+            style={{
+              color: c.foreground,
+              borderWidth: 1,
+              borderColor: c.border,
+              borderRadius: 6,
+              paddingHorizontal: 8,
+              paddingVertical: 4,
+              minHeight: ITEM_HEIGHT,
+              fontSize: 14,
+              backgroundColor: c.surface2,
+            }}
+          />
+        </View>
+        {targets.length === 0 ? (
+          <Text style={[muted, { marginHorizontal: 12, paddingVertical: 6 }]}>No other workspace matches.</Text>
+        ) : (
+          targets.map((t) => {
+            const where = workspaceFolderOf(folders.doc, t);
+            return item(
+              t.id,
+              "PanelsTopLeft",
+              t.title,
+              () => mergeInto(t),
+              where === current ? undefined : (
+                <Text style={[muted, { maxWidth: 72 }]} numberOfLines={1}>
+                  {folderName(where)}
+                </Text>
+              ),
+            );
+          })
+        )}
+      </>
+    );
+  } else if (page === "split") {
+    rows = 2 + ws.agents.length;
+    body = (
+      <>
+        {back}
+        {separator("s1")}
+        {ws.agents.map((a) =>
+          item(a.id, "MessageSquare", a.title, () => {
+            onClose();
+            if (mover) void mover.split(ws, a);
+          }),
+        )}
+      </>
+    );
+  } else if (page === "move") {
     const choices = [...folders.doc.folders, { id: UNSORTED_ID, name: "Unsorted" }];
     rows = choices.length + 1;
     body = (
@@ -172,6 +276,17 @@ export function RowMenu(props: {
       }),
     );
     entries.push(item("move", "FolderInput", "Move to folder", () => setPage("move"), chevron));
+    if (mover && ws.agents.length > 0 && (props.workspaces?.length ?? 0) > 1) {
+      entries.push(
+        item("merge", "Merge", "Merge into workspace", () => {
+          setQuery("");
+          setPage("merge");
+        }, chevron),
+      );
+    }
+    if (mover && ws.agents.length > 1) {
+      entries.push(item("split", "SquareSplitHorizontal", "Split off a conversation", () => setPage("split"), chevron));
+    }
     entries.push(
       item("archive", "Archive", "Archive", () =>
         void act(

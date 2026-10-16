@@ -8,15 +8,18 @@ import {
   folderOf,
   FoldersDocumentSchema,
   groupWorkspaces,
+  keepFolder,
   type ListedAgent,
   markAutoTitle,
   matchesWorkspace,
   mergeSuggestions,
+  mergeTargets,
   mostCommon,
   moveAgent,
   moveFolder,
   moveWorkspace,
   parseRoute,
+  renameAgent,
   renameFolder,
   SuggestionsSchema,
   agentBucket,
@@ -211,4 +214,42 @@ test("workspaces made from a folder wait for a title until settled", () => {
   assert.deepEqual(withoutAutoTitle(doc, ["w1"]).autoTitle, {});
   assert.equal(withoutAutoTitle(doc, ["w2"]), doc);
   assert.deepEqual(FoldersDocumentSchema.parse({ folders: [] }).autoTitle, {});
+});
+
+test("a moved conversation keeps its folder, hand placement and note under its new agent ID", () => {
+  let doc = withFolders("Health");
+  doc = { ...doc, assignments: { a1: idOf(doc, "Health") }, manual: { a1: true }, notes: { a1: "blood tests" } };
+  const moved = renameAgent(doc, "a1", "n1");
+  assert.deepEqual(moved.assignments, { n1: idOf(doc, "Health") });
+  assert.deepEqual(moved.manual, { n1: true });
+  assert.deepEqual(moved.notes, { n1: "blood tests" });
+  assert.equal(renameAgent(doc, "a1", "a1"), doc, "an unchanged ID changes nothing");
+});
+
+test("a workspace that gains or loses conversations stays in the folder it showed in", () => {
+  let doc = withFolders("Chores", "Money");
+  doc = { ...doc, assignments: { t1: idOf(doc, "Chores"), m1: idOf(doc, "Money"), m2: idOf(doc, "Money") } };
+  const target = { id: "w1", title: "Chores", agents: [{ id: "t1" }] };
+  assert.equal(keepFolder(doc, target, idOf(doc, "Chores")), doc, "nothing to pin while it would stay anyway");
+  const merged = keepFolder(doc, { ...target, title: "Errands", agents: [{ id: "t1" }, { id: "m1" }, { id: "m2" }] }, idOf(doc, "Chores"));
+  assert.equal(merged.workspaceAssignments.w1, idOf(doc, "Chores"));
+  assert.equal(merged.workspaceManual.w1, true);
+});
+
+test("merge targets list the workspace's own folder first, newest first, and follow the search", () => {
+  let doc = withFolders("Chores", "Money");
+  doc = { ...doc, assignments: { a: idOf(doc, "Chores"), b: idOf(doc, "Chores"), c: idOf(doc, "Money"), d: idOf(doc, "Chores") } };
+  const workspaces = groupWorkspaces(
+    [
+      agent("a", "wa", "2026-01-01T00:00:00Z", "Dishes"),
+      agent("b", "wb", "2026-01-02T00:00:00Z", "Laundry"),
+      agent("c", "wc", "2026-01-05T00:00:00Z", "Taxes"),
+      agent("d", "wd", "2026-01-03T00:00:00Z", "Recycling"),
+    ],
+    new Map(),
+  );
+  const source = workspaces.find((w) => w.id === "wa")!;
+  assert.deepEqual(mergeTargets(doc, workspaces, source, "").map((w) => w.id), ["wd", "wb", "wc"]);
+  assert.deepEqual(mergeTargets(doc, workspaces, source, "tax").map((w) => w.id), ["wc"]);
+  assert.deepEqual(mergeTargets(doc, workspaces, source, "dishes"), [], "never itself");
 });

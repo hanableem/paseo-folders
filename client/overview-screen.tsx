@@ -20,6 +20,7 @@ import {
 } from "../shared/model";
 import { importSuggestions, useDirectory, useFolders } from "./data";
 import { type MenuPoint, RowMenu } from "./menu";
+import { useMover } from "./move";
 import { Button, MoveModal, SearchBox, type Styles, useStyles, WorkspaceRow } from "./ui";
 
 /** Manage folders, search every workspace, and import suggestions. */
@@ -31,6 +32,7 @@ export function OverviewScreen({ theme, layout, navigation }: PluginScreenProps)
   const [menu, setMenu] = useState<{ ws: ListedWorkspace; at: MenuPoint } | null>(null);
   const closeMenu = useCallback(() => setMenu(null), []);
   const readSuggestions = useRpc(readSuggestionsRpc);
+  const mover = useMover(folders, (workspaceId) => navigation?.openWorkspace({ workspaceId }));
   const [query, setQuery] = useState("");
   const [newName, setNewName] = useState("");
   const [moving, setMoving] = useState<ListedWorkspace | null>(null);
@@ -159,6 +161,8 @@ export function OverviewScreen({ theme, layout, navigation }: PluginScreenProps)
           bounds={null}
           theme={theme}
           folders={ready}
+          workspaces={workspaces}
+          mover={mover}
           onClose={closeMenu}
         />
       ) : null}
