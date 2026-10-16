@@ -12,6 +12,7 @@
     "paseo-plugin.json",
     "OVERVIEW.md",
     "README.md",
+    "README.zh-CN.md",
     "index.client.tsx",
     "index.server.ts",
     "client/",
