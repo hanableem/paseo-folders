@@ -17,8 +17,12 @@ import {
 
 const PARENT_AGENT_LABEL = "paseo.parent-agent-id";
 const IMPORT_MS = 10 * 60_000;
-/** A workspace made from a folder stops waiting for a title after a day. */
+/**
+ * A workspace made from a folder stops waiting for a title after a day; one that
+ * is still empty and untouched by then is archived.
+ */
 const AUTO_TITLE_MS = 24 * 60 * 60_000;
+const SWEEP_MS = 10 * 60_000;
 const PAGE_SIZE = 200;
 const MAX_PAGES = 50;
 
@@ -423,11 +427,12 @@ export function useAutoTitle(
     const titles: Array<[string, string]> = [];
     for (const [id, since] of waiting) {
       const own = meta.get(id)?.title;
-      if (own || !(now - Date.parse(since) < AUTO_TITLE_MS)) {
+      const agents = workspaces.find((ws) => ws.id === id)?.agents ?? [];
+      // An empty one is left to useArchiveAbandoned, however old.
+      if (own || (agents.length > 0 && !(now - Date.parse(since) < AUTO_TITLE_MS))) {
         settled.push(id);
         continue;
       }
-      const agents = workspaces.find((ws) => ws.id === id)?.agents ?? [];
       const first = agents[agents.length - 1];
       // Wait for fresh metadata and for the first answer, which settles the conversation's title.
       if (!meta.has(id) || !first || first.bucket === "running" || first.title === "Untitled") continue;
@@ -449,4 +454,98 @@ export function useAutoTitle(
       busy.current = false;
     });
   }, [folders, workspaces, meta, paseo]);
+}
+
+type WorkspaceDescriptor = NonNullable<Awaited<ReturnType<ReturnType<PaseoApi["workspaces"]["ref"]>["refresh"]>>>;
+
+/** Workspaces holding any conversation, archived ones and subagents included. */
+async function workspacesInUse(paseo: PaseoApi): Promise<Set<string>> {
+  const ids = new Set<string>();
+  let cursor: string | undefined;
+  for (let page = 0; page < MAX_PAGES; page += 1) {
+    const result = await paseo.agents.list({
+      filter: { includeArchived: true },
+      page: cursor ? { limit: PAGE_SIZE, cursor } : { limit: PAGE_SIZE },
+    });
+    for (const { agent } of result.entries) if (agent.workspaceId) ids.add(agent.workspaceId);
+    const next = result.pageInfo.nextCursor;
+    if (!result.pageInfo.hasMore || !next) return ids;
+    cursor = next;
+  }
+  // Not seen to the end, so any workspace could be in use.
+  throw new Error("too many conversations to check");
+}
+
+/** As it was made: a local workspace with no title, pin, label, activity or running script. */
+function untouched(ws: WorkspaceDescriptor): boolean {
+  return (
+    (ws.workspaceKind === "local_checkout" || ws.workspaceKind === "directory") &&
+    !ws.title?.trim() &&
+    !ws.pinnedAt &&
+    (ws.labels?.length ?? 0) === 0 &&
+    !ws.archivingAt &&
+    ws.activityAt === null &&
+    !ws.scripts.some((script) => script.lifecycle === "running")
+  );
+}
+
+/** Still as it was made and without a terminal; false once it is gone. */
+async function abandoned(paseo: PaseoApi, workspaceId: string): Promise<boolean> {
+  const ws = await paseo.workspaces.ref(workspaceId).refresh();
+  if (!ws || !untouched(ws)) return false;
+  const { entries } = await paseo.terminals.list({ workspaceId });
+  return !entries.some((terminal) => terminal.workspaceId === workspaceId);
+}
+
+/**
+ * Archives workspaces made from a folder that were left empty for a day, so that
+ * Paseo's own list does not fill up with them. One goes only if it is untouched,
+ * holds no conversation or terminal and is not open here; it is a local workspace,
+ * so no files are deleted. A workspace someone has started using, or that is gone,
+ * stops being tracked.
+ */
+export function useArchiveAbandoned(folders: FoldersState, loaded: boolean, shownId: string | null): void {
+  const paseo = usePaseo();
+  const latest = useRef({ folders, shownId, paseo });
+  latest.current = { folders, shownId, paseo };
+  const busy = useRef(false);
+  const ready = folders.status === "ready";
+  useEffect(() => {
+    if (!ready || !loaded) return;
+    const sweep = async () => {
+      const { folders: state, paseo: api } = latest.current;
+      if (state.status !== "ready" || busy.current) return;
+      const now = Date.now();
+      const due = Object.entries(state.doc.autoTitle)
+        .filter(([, since]) => !(now - Date.parse(since) < AUTO_TITLE_MS))
+        .map(([id]) => id);
+      if (due.length === 0) return;
+      busy.current = true;
+      try {
+        const inUse = await workspacesInUse(api);
+        const settled: string[] = [];
+        let archived = 0;
+        for (const id of due) {
+          if (id === latest.current.shownId) continue;
+          // One with conversations has had its day to take a title, as in useAutoTitle.
+          if (!inUse.has(id) && (await abandoned(api, id))) {
+            if (id === latest.current.shownId) continue;
+            const result = await api.workspaces.archive(id);
+            if (result.error) continue;
+            archived += 1;
+          }
+          settled.push(id);
+        }
+        if (settled.length > 0) await state.update((doc) => withoutAutoTitle(doc, settled));
+        debugLog("archive-abandoned", { due: due.length, archived, settled: settled.length });
+      } catch (e) {
+        debugLog("archive-abandoned-error", { message: String(e instanceof Error ? e.message : e).slice(0, 200) });
+      } finally {
+        busy.current = false;
+      }
+    };
+    void sweep();
+    const timer = setInterval(() => void sweep(), SWEEP_MS);
+    return () => clearInterval(timer);
+  }, [ready, loaded]);
 }

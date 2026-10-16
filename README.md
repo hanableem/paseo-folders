@@ -2,7 +2,13 @@
 
 English | [简体中文](README.zh-CN.md)
 
-A [Paseo](https://paseo.sh) plugin that sorts your workspaces into folders in the sidebar.
+A [Paseo](https://paseo.sh) plugin that adds folders to the sidebar, so you can group workspaces by topic, not just by project. It can also merge workspaces and move a conversation to another workspace, which Paseo cannot do yet.
+
+<img src="docs/sidebar.png" width="600" alt="The Folders section at the top of Paseo's sidebar: folders with workspace counts, one folder open, and a workspace's menu showing Move to folder with the list of folders">
+
+- **Folders.** Put workspaces from any project into folders at the top of the sidebar, and drag them from one folder to another. Workspaces you have not filed wait under Unsorted.
+- **Merge and split.** Drag a workspace onto another to merge them: its conversations become tabs there. Drag a single conversation onto another workspace to move it, or onto a folder to give it a workspace of its own. Experimental.
+- **The same folders everywhere.** Folders are stored on your Paseo host, so your desktop and mobile apps show the same ones.
 
 Paseo groups workspaces by project directory. If most of your work runs in the same directory, it ends up in one long list. This plugin adds folders on top of that, without changing projects, workspaces or agents. Once you use it, you can collapse the project in Paseo's own list.
 
@@ -10,7 +16,7 @@ Paseo groups workspaces by project directory. If most of your work runs in the s
 
 - A **Folders** section at the top of the sidebar: one row per folder with its workspace count, and **Unsorted** for workspaces in no folder, first unless you move it. One folder is open at a time and lists eight workspaces, with **Show more** and **Show less** for the rest. Rows show Paseo's status (running ring, attention and error dots) and, for a single conversation, its provider's mark.
 - The workspace Paseo is showing is highlighted, as in Paseo's own list. Native mobile apps cannot read which one that is, so there the highlight marks the workspace last opened from the folders.
-- Hover a folder and press **+** (on touch screens, the open folder shows it) to make a new workspace already filed there. It is a local workspace in the project most of that folder's workspaces use, and opens on Paseo's own new-tab screen. Paseo names a workspace after the prompt it was created with; this one starts empty, so once its first conversation has answered, it takes that conversation's title unless you have named it. For another project or a worktree, use Paseo's **New workspace** and move the result.
+- Hover a folder and press **+** (on touch screens, the open folder shows it) to make a new workspace already filed there. It is a local workspace in the project most of that folder's workspaces use, and opens on Paseo's own new-tab screen. Paseo names a workspace after the prompt it was created with; this one starts empty, so once its first conversation has answered, it takes that conversation's title unless you have named it. One you leave empty stays in the folder as **New workspace**, and a day after it was made the plugin archives it, unless it is open, has a terminal, or you have named or pinned it. No files are deleted; to remove it sooner, right-click it and choose **Archive**. For another project or a worktree, use Paseo's **New workspace** and move the result.
 - With a mouse, drag a workspace onto a folder to move it, or onto another workspace to merge it into that one. A workspace with several conversations shows their count with an arrow; click it to list them, then drag one onto another workspace to move it there, or onto a folder to give it a workspace of its own in that folder. While you drag, the target row is outlined and a label under the pointer says what letting go will do. Moves into another project ask first.
 - Manage folders right in the sidebar: drag a folder up or down with the mouse to put it in order (a line shows where it will land), press the new-folder button on the **Folders** header to add one, and right-click a folder (or press its **⋮**, which touch screens show on the open folder) to make a workspace in it, rename it, add a folder below it or delete it. Deleting asks first and sends its workspaces back to Unsorted.
 - Right-click a workspace, or long-press it on touch screens, for a menu modelled on Paseo's workspace menu: copy path, copy branch name, copy resume command and agent id, rename, **Move to folder**, **Merge into workspace**, **Split off a conversation**, archive.
@@ -62,7 +68,7 @@ Default location: `<Paseo home>/paseo-folders/suggestions.json` (`~/.paseo` unle
 
 The plugin imports when the app starts and every ten minutes. An import that changes nothing saves nothing.
 
-To read placements back, a script can read the plugin's settings document on the host: `<Paseo home>/plugin-settings/<installation id>/folders.json`. `values.workspaceAssignments` and `values.workspaceManual` hold the workspaces you placed by hand. `values.autoTitle` lists workspaces made from a folder that are still waiting for their first conversation's title. `values.unsortedName` and `values.unsortedAt` hold the name you gave Unsorted (empty for the default) and how many folders come before it.
+To read placements back, a script can read the plugin's settings document on the host: `<Paseo home>/plugin-settings/<installation id>/folders.json`. `values.workspaceAssignments` and `values.workspaceManual` hold the workspaces you placed by hand. `values.autoTitle` lists workspaces made from a folder that are still waiting for their first conversation's title or, while empty, to be archived. `values.unsortedName` and `values.unsortedAt` hold the name you gave Unsorted (empty for the default) and how many folders come before it.
 
 ## Merge and split workspaces (experimental)
 

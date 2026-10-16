@@ -34,5 +34,5 @@
     "typescript": "^5.9.3",
     "zod": "^4.4.3"
   },
-  "description": "Folders for Paseo conversations"
+  "description": "Paseo plugin: folders for workspaces in the sidebar, plus merging workspaces and moving conversations between them"
 }

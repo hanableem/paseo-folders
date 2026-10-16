@@ -1,11 +1,12 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 import { usePaseo } from "@getpaseo/plugin/client";
 import { copyText, Icon, useToast } from "@getpaseo/plugin/client/react-native";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import {
   Dimensions,
   type LayoutChangeEvent,
   Modal,
+  Platform,
   Pressable,
   type PressableStateCallbackType,
   Text,
@@ -29,9 +30,22 @@ import {
 } from "../shared/model";
 import type { ReadyFolders, WorkspaceMeta } from "./data";
 import type { Mover } from "./move";
+import { rectOfId } from "./web-dom";
 
-type Page = "main" | "move" | "rename" | "merge" | "split";
-type FolderPage = "main" | "new" | "rename" | "delete";
+type Page = "move" | "rename" | "merge" | "split";
+type FolderPage = "new" | "rename" | "delete";
+
+const PAGE_LABELS: Record<Page, string> = {
+  move: "Move to folder",
+  rename: "Rename workspace",
+  merge: "Merge into workspace",
+  split: "Split off a conversation",
+};
+const FOLDER_PAGE_LABELS: Record<FolderPage, string> = {
+  new: "New folder",
+  rename: "Rename folder",
+  delete: "Delete folder",
+};
 
 /** Where the pointer was, in window coordinates. */
 export interface MenuPoint {
@@ -45,6 +59,11 @@ const MENU_WIDTH = 220;
 const ITEM_HEIGHT = 28;
 const OFFSET = 4;
 const EDGE = 8;
+// A submenu opens 4 px beside its menu once the pointer has rested on its item for
+// 90 ms. Moving on to another item leaves an open one 260 ms to be reached.
+const SUBMENU_GAP = 4;
+const SUBMENU_OPEN_MS = 90;
+const SUBMENU_CLOSE_MS = 260;
 /** Workspaces listed under Merge into workspace; typing narrows them down. */
 const MAX_TARGETS = 7;
 
@@ -58,15 +77,49 @@ export function tint(hex: string, alpha: number): string {
 
 type WebEvent = { preventDefault?: () => void };
 
+/** The panel of a menu or submenu, styled like Paseo's. */
+function surface(theme: PluginTheme) {
+  const c = theme.colors;
+  return {
+    position: "absolute" as const,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: c.border,
+    backgroundColor: c.surface1,
+    overflow: "hidden" as const,
+    shadowColor: "rgba(0, 0, 0, 0.20)",
+    shadowOffset: { width: 0, height: 4 },
+    shadowRadius: 8,
+    elevation: 8,
+  };
+}
+
+/** A submenu shown beside its menu. */
+interface Submenu {
+  label: string;
+  /** Window y of the item that opened it, so that its first row lines up with that item. */
+  anchor: number;
+  /** The pointer reached the submenu, so it stays open. */
+  onEnter(): void;
+  content: ReactNode;
+}
+
 /**
  * A menu at a window point, in a layer over the whole app like Paseo's own menus,
  * so nothing in the sidebar can clip it or show through it. It opens below and
  * right of the point, and goes up or left to stay in the window. A press or a
  * right-click outside it closes it, as does Escape.
  */
-function Menu(props: { at: MenuPoint; label: string; theme: PluginTheme; onClose(): void; children: ReactNode }) {
+function Menu(props: {
+  at: MenuPoint;
+  label: string;
+  theme: PluginTheme;
+  onClose(): void;
+  submenu?: Submenu | null;
+  children: ReactNode;
+}) {
   const { at, onClose } = props;
-  const c = props.theme.colors;
   // Shown once its height is known, so that near the bottom it can open upwards.
   const [height, setHeight] = useState<number | null>(null);
   const win = Dimensions.get("window");
@@ -104,29 +157,129 @@ function Menu(props: { at: MenuPoint; label: string; theme: PluginTheme; onClose
             const next = event.nativeEvent.layout.height;
             setHeight((h) => (h === next ? h : next));
           }}
-          style={{
-            position: "absolute",
-            left,
-            top,
-            width,
-            opacity: height === null ? 0 : 1,
-            paddingVertical: 4,
-            borderRadius: 8,
-            borderWidth: 1,
-            borderColor: c.border,
-            backgroundColor: c.surface1,
-            overflow: "hidden",
-            shadowColor: "rgba(0, 0, 0, 0.20)",
-            shadowOffset: { width: 0, height: 4 },
-            shadowRadius: 8,
-            elevation: 8,
-          }}
+          style={{ ...surface(props.theme), left, top, width, opacity: height === null ? 0 : 1 }}
         >
           {props.children}
         </View>
+        {props.submenu ? (
+          <Flyout key={props.submenu.label} theme={props.theme} menu={{ left, width }} submenu={props.submenu} />
+        ) : null}
       </View>
     </Modal>
   );
+}
+
+/** A submenu beside its menu: on the right, or on the left when the window has no room there. */
+function Flyout(props: { theme: PluginTheme; menu: { left: number; width: number }; submenu: Submenu }) {
+  const { menu, submenu } = props;
+  const [height, setHeight] = useState<number | null>(null);
+  const win = Dimensions.get("window");
+  const width = MENU_WIDTH;
+  const right = menu.left + menu.width + SUBMENU_GAP;
+  const leftSide = menu.left - SUBMENU_GAP - width;
+  const left =
+    right + width <= win.width - EDGE ? right : leftSide >= EDGE ? leftSide : Math.max(EDGE, win.width - EDGE - width);
+  // The panel's 1 px border and 4 px padding come before its first row.
+  const wanted = submenu.anchor - 5;
+  const top = height === null ? wanted : Math.max(EDGE, Math.min(wanted, win.height - EDGE - height));
+  const keepOpen = { onMouseEnter: submenu.onEnter } as object;
+  return (
+    <View
+      accessibilityRole="menu"
+      accessibilityLabel={submenu.label}
+      onLayout={(event: LayoutChangeEvent) => {
+        const next = event.nativeEvent.layout.height;
+        setHeight((h) => (h === next ? h : next));
+      }}
+      style={{ ...surface(props.theme), left, top, width, opacity: height === null ? 0 : 1 }}
+      {...keepOpen}
+    >
+      {submenu.content}
+    </View>
+  );
+}
+
+const itemId = (key: string) => `paseo-folders-menu:${key}`;
+
+/**
+ * Which submenu of a menu is open. With a mouse, on a window wide enough for two
+ * menus side by side, a submenu opens beside the menu once the pointer rests on its
+ * item, or at once when the item is pressed, as in Paseo's menus. Elsewhere (the
+ * mobile apps, narrow windows) pressing the item shows the submenu in place of the
+ * menu, with a row to go back.
+ */
+function useSubmenu<K extends string>() {
+  const beside = Platform.OS === "web" && Dimensions.get("window").width >= 2 * MENU_WIDTH + SUBMENU_GAP + 2 * EDGE;
+  const [open, setOpen] = useState<{ key: K; anchor: number } | null>(null);
+  // The pointer handlers read these, so that they never act on a stale render.
+  const openKey = useRef<K | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Once something is typed in a submenu, only a press closes it: a stray pointer cannot throw the text away.
+  const typed = useRef(false);
+
+  const cancel = () => {
+    if (timer.current !== null) clearTimeout(timer.current);
+    timer.current = null;
+  };
+  useEffect(() => cancel, []);
+  const after = (ms: number, run: () => void) => {
+    cancel();
+    timer.current = setTimeout(() => {
+      timer.current = null;
+      run();
+    }, ms);
+  };
+  const set = (next: { key: K; anchor: number } | null) => {
+    cancel();
+    typed.current = false;
+    openKey.current = next?.key ?? null;
+    setOpen(next);
+  };
+  const show = (key: K, prepare?: () => void) => {
+    prepare?.();
+    set({ key, anchor: rectOfId(itemId(key))?.y ?? 0 });
+  };
+
+  return {
+    beside,
+    open: open?.key ?? null,
+    anchor: open?.anchor ?? 0,
+    /** Props for the item that opens submenu `key`; `prepare` resets what the submenu edits. */
+    opener(key: K, prepare?: () => void) {
+      return {
+        nativeID: itemId(key),
+        active: beside && open?.key === key,
+        onPress: () => show(key, prepare),
+        onHoverIn: beside
+          ? () => {
+              if (openKey.current === key) cancel();
+              else if (!typed.current)
+                after(openKey.current === null ? SUBMENU_OPEN_MS : SUBMENU_CLOSE_MS, () => show(key, prepare));
+            }
+          : undefined,
+        onHoverOut: beside
+          ? () => {
+              if (openKey.current !== key) cancel();
+            }
+          : undefined,
+      };
+    },
+    /** For the menu's other items: an open submenu closes once the pointer rests on one. */
+    onHoverOther: beside
+      ? () => {
+          if (openKey.current !== null && !typed.current) after(SUBMENU_CLOSE_MS, () => set(null));
+          else cancel();
+        }
+      : undefined,
+    /** The pointer reached the submenu. */
+    keep: cancel,
+    /** Something was typed in the submenu. */
+    typing() {
+      typed.current = true;
+      cancel();
+    },
+    close: () => set(null),
+  };
 }
 
 /** A menu row like Paseo's: icon, label, and a hint or chevron at the end. */
@@ -138,6 +291,11 @@ function MenuItem(props: {
   trailing?: ReactNode;
   /** In the theme's danger colour, for deleting. */
   danger?: boolean;
+  /** Highlighted, as an item is while its submenu is open. */
+  active?: boolean;
+  nativeID?: string;
+  onHoverIn?(): void;
+  onHoverOut?(): void;
 }) {
   const c = props.theme.colors;
   const color = props.danger ? c.statusDanger : c.foreground;
@@ -154,11 +312,19 @@ function MenuItem(props: {
       borderWidth: 1,
       borderColor: "transparent",
       borderRadius: 6,
-      backgroundColor: hovered || state.pressed ? c.surface2 : "transparent",
+      backgroundColor: hovered || state.pressed || props.active ? c.surface2 : "transparent",
     };
   };
   return (
-    <Pressable accessibilityRole="menuitem" accessibilityLabel={props.label} onPress={props.onPress} style={style}>
+    <Pressable
+      accessibilityRole="menuitem"
+      accessibilityLabel={props.label}
+      nativeID={props.nativeID}
+      onPress={props.onPress}
+      onHoverIn={props.onHoverIn}
+      onHoverOut={props.onHoverOut}
+      style={style}
+    >
       <View style={{ width: 16, alignItems: "center", justifyContent: "center" }}>
         <Icon name={props.icon} size={16} color={color} />
       </View>
@@ -257,7 +423,7 @@ export function RowMenu(props: {
   const { ws, meta, theme, folders, mover, onClose } = props;
   const paseo = usePaseo();
   const toast = useToast();
-  const [page, setPage] = useState<Page>("main");
+  const sub = useSubmenu<Page>();
   const [draft, setDraft] = useState(ws.title);
   const [query, setQuery] = useState("");
   const single = ws.agents.length === 1 ? ws.agents[0] : null;
@@ -278,138 +444,155 @@ export function RowMenu(props: {
   const item = (key: string, icon: string, label: string, onPress: () => void, trailing?: ReactNode) => (
     <MenuItem key={key} theme={theme} icon={icon} label={label} onPress={onPress} trailing={trailing} />
   );
-  const back = (
-    <>
-      {item("back", "ChevronLeft", ws.title, () => setPage("main"))}
-      <MenuSeparator theme={theme} />
-    </>
+  // The menu's own items, unlike a submenu's, close an open submenu when the pointer rests on them.
+  const action = (key: string, icon: string, label: string, onPress: () => void, trailing?: ReactNode) => (
+    <MenuItem
+      key={key}
+      theme={theme}
+      icon={icon}
+      label={label}
+      onPress={onPress}
+      trailing={trailing}
+      onHoverIn={sub.onHoverOther}
+    />
   );
   const chevron = <Icon name="ChevronRight" size={14} color={theme.colors.foregroundMuted} />;
+  const opener = (key: Page, icon: string, label: string, prepare?: () => void) => (
+    <MenuItem key={key} theme={theme} icon={icon} label={label} trailing={chevron} {...sub.opener(key, prepare)} />
+  );
   const mergeInto = (target: ListedWorkspace) => {
     onClose();
     if (mover) void mover.merge(ws, target);
   };
 
-  let body: ReactNode;
-  if (page === "merge") {
-    const targets = mergeTargets(folders.doc, props.workspaces ?? [], ws, query).slice(0, MAX_TARGETS);
-    body = (
-      <>
-        {back}
-        <MenuField
-          theme={theme}
-          value={query}
-          onChangeText={setQuery}
-          label="Search workspaces"
-          placeholder="Search workspaces"
-        />
-        {targets.length === 0 ? (
-          <MenuNote theme={theme}>No other workspace matches.</MenuNote>
-        ) : (
-          targets.map((t) => {
-            const where = workspaceFolderOf(folders.doc, t);
-            const hint = where === current ? undefined : <MenuHint theme={theme}>{folderName(folders.doc, where)}</MenuHint>;
-            return item(t.id, "PanelsTopLeft", t.title, () => mergeInto(t), hint);
-          })
-        )}
-      </>
-    );
-  } else if (page === "split") {
-    body = (
-      <>
-        {back}
-        {ws.agents.map((a) =>
-          item(a.id, "MessageSquare", a.title, () => {
-            onClose();
-            if (mover) void mover.split(ws, a);
-          }),
-        )}
-      </>
-    );
-  } else if (page === "move") {
-    body = (
-      <>
-        {back}
-        {folderOrder(folders.doc).map((f) =>
-          item(f.id, f.id === current ? "Check" : f.id === UNSORTED_ID ? "Inbox" : "Folder", f.name, () =>
-            void act(
-              async () => {
-                if (f.id === current) return;
-                if (!(await folders.update((d) => moveWorkspace(d, ws.id, f.id)))) throw new Error("save failed");
-              },
-              `Moved to ${f.name}`,
-              "Could not move. Try again.",
-            ),
+  function page(key: Page): ReactNode {
+    if (key === "merge") {
+      const targets = mergeTargets(folders.doc, props.workspaces ?? [], ws, query).slice(0, MAX_TARGETS);
+      return (
+        <>
+          <MenuField
+            theme={theme}
+            value={query}
+            onChangeText={(text) => {
+              sub.typing();
+              setQuery(text);
+            }}
+            label="Search workspaces"
+            placeholder="Search workspaces"
+          />
+          {targets.length === 0 ? (
+            <MenuNote theme={theme}>No other workspace matches.</MenuNote>
+          ) : (
+            targets.map((t) => {
+              const where = workspaceFolderOf(folders.doc, t);
+              const hint = where === current ? undefined : <MenuHint theme={theme}>{folderName(folders.doc, where)}</MenuHint>;
+              return item(t.id, "PanelsTopLeft", t.title, () => mergeInto(t), hint);
+            })
+          )}
+        </>
+      );
+    }
+    if (key === "split") {
+      return ws.agents.map((a) =>
+        item(a.id, "MessageSquare", a.title, () => {
+          onClose();
+          if (mover) void mover.split(ws, a);
+        }),
+      );
+    }
+    if (key === "move") {
+      return folderOrder(folders.doc).map((f) =>
+        item(f.id, f.id === current ? "Check" : f.id === UNSORTED_ID ? "Inbox" : "Folder", f.name, () =>
+          void act(
+            async () => {
+              if (f.id === current) return;
+              if (!(await folders.update((d) => moveWorkspace(d, ws.id, f.id)))) throw new Error("save failed");
+            },
+            `Moved to ${f.name}`,
+            "Could not move. Try again.",
           ),
-        )}
-      </>
-    );
-  } else if (page === "rename") {
+        ),
+      );
+    }
     const save = () => {
       const title = draft.trim();
       if (title) void act(() => paseo.workspaces.ref(ws.id).setTitle(title), "Renamed", "Could not rename.");
     };
-    body = (
+    return (
       <>
-        {back}
-        <MenuField theme={theme} value={draft} onChangeText={setDraft} label="Workspace title" selectAll onSubmit={save} />
+        <MenuField
+          theme={theme}
+          value={draft}
+          onChangeText={(text) => {
+            sub.typing();
+            setDraft(text);
+          }}
+          label="Workspace title"
+          selectAll
+          onSubmit={save}
+        />
         {item("save", "Check", "Save", save)}
-      </>
-    );
-  } else {
-    // Like Paseo's tab menu: what to copy and the name first, then what to do with the workspace.
-    body = (
-      <>
-        {meta?.directory ? item("path", "Copy", "Copy path", () => copy(meta.directory, "Path copied")) : null}
-        {meta?.branch ? item("branch", "Copy", "Copy branch name", () => copy(meta.branch, "Branch name copied")) : null}
-        {resume ? item("resume", "Copy", "Copy resume command", () => copy(resume, "Resume command copied")) : null}
-        {single
-          ? item(
-              "agent-id",
-              "Copy",
-              "Copy agent id",
-              () => copy(single.id, "Agent id copied"),
-              <MenuHint theme={theme}>{single.id.slice(0, 7)}</MenuHint>,
-            )
-          : null}
-        {item("rename", "Pencil", "Rename workspace", () => {
-          setDraft(ws.title);
-          setPage("rename");
-        })}
-        <MenuSeparator theme={theme} />
-        {item("move", "FolderInput", "Move to folder", () => setPage("move"), chevron)}
-        {mover && ws.agents.length > 0 && (props.workspaces?.length ?? 0) > 1
-          ? item(
-              "merge",
-              "Merge",
-              "Merge into workspace",
-              () => {
-                setQuery("");
-                setPage("merge");
-              },
-              chevron,
-            )
-          : null}
-        {mover && ws.agents.length > 1
-          ? item("split", "SquareSplitHorizontal", "Split off a conversation", () => setPage("split"), chevron)
-          : null}
-        {item("archive", "Archive", "Archive", () =>
-          void act(
-            async () => {
-              await paseo.workspaces.archive(ws.id);
-              props.onArchived?.(ws.id);
-            },
-            "Archived",
-            "Could not archive.",
-          ),
-        )}
       </>
     );
   }
 
+  // Like Paseo's tab menu: what to copy and the name first, then what to do with the workspace.
+  const main = (
+    <>
+      {meta?.directory ? action("path", "Copy", "Copy path", () => copy(meta.directory, "Path copied")) : null}
+      {meta?.branch ? action("branch", "Copy", "Copy branch name", () => copy(meta.branch, "Branch name copied")) : null}
+      {resume ? action("resume", "Copy", "Copy resume command", () => copy(resume, "Resume command copied")) : null}
+      {single
+        ? action(
+            "agent-id",
+            "Copy",
+            "Copy agent id",
+            () => copy(single.id, "Agent id copied"),
+            <MenuHint theme={theme}>{single.id.slice(0, 7)}</MenuHint>,
+          )
+        : null}
+      {opener("rename", "Pencil", "Rename workspace", () => setDraft(ws.title))}
+      <MenuSeparator theme={theme} />
+      {opener("move", "FolderInput", "Move to folder")}
+      {mover && ws.agents.length > 0 && (props.workspaces?.length ?? 0) > 1
+        ? opener("merge", "Merge", "Merge into workspace", () => setQuery(""))
+        : null}
+      {mover && ws.agents.length > 1 ? opener("split", "SquareSplitHorizontal", "Split off a conversation") : null}
+      {action("archive", "Archive", "Archive", () =>
+        void act(
+          async () => {
+            await paseo.workspaces.archive(ws.id);
+            props.onArchived?.(ws.id);
+          },
+          "Archived",
+          "Could not archive.",
+        ),
+      )}
+    </>
+  );
+
+  const open = sub.open;
   return (
-    <Menu at={props.at} label={`Menu for ${ws.title}`} theme={theme} onClose={onClose}>
-      {body}
+    <Menu
+      at={props.at}
+      label={`Menu for ${ws.title}`}
+      theme={theme}
+      onClose={onClose}
+      submenu={
+        sub.beside && open
+          ? { label: PAGE_LABELS[open], anchor: sub.anchor, onEnter: sub.keep, content: page(open) }
+          : null
+      }
+    >
+      {!sub.beside && open ? (
+        <>
+          {item("back", "ChevronLeft", ws.title, sub.close)}
+          <MenuSeparator theme={theme} />
+          {page(open)}
+        </>
+      ) : (
+        main
+      )}
     </Menu>
   );
 }
@@ -432,7 +615,7 @@ export function FolderMenu(props: {
 }) {
   const { folder, theme, folders, onClose } = props;
   const toast = useToast();
-  const [page, setPage] = useState<FolderPage>(folder ? "main" : "new");
+  const sub = useSubmenu<FolderPage>();
   const [draft, setDraft] = useState("");
 
   async function save(change: (doc: FoldersDocument) => FoldersDocument, failed: string) {
@@ -453,45 +636,59 @@ export function FolderMenu(props: {
     const name = freeName();
     if (name) void save((d) => addFolder(d, name, folder?.id), "Could not add the folder. Try again.");
   };
+  const type = (text: string) => {
+    sub.typing();
+    setDraft(text);
+  };
 
   const item = (key: string, icon: string, label: string, onPress: () => void, danger?: boolean) => (
     <MenuItem key={key} theme={theme} icon={icon} label={label} onPress={onPress} danger={danger} />
   );
+  const chevron = <Icon name="ChevronRight" size={14} color={theme.colors.foregroundMuted} />;
+  const opener = (key: FolderPage, icon: string, label: string, prepare?: () => void, danger?: boolean) => (
+    <MenuItem
+      key={key}
+      theme={theme}
+      icon={icon}
+      label={label}
+      trailing={chevron}
+      danger={danger}
+      {...sub.opener(key, prepare)}
+    />
+  );
 
-  const back = folder ? (
+  const newFolder = (
     <>
-      {item("back", "ChevronLeft", folder.name, () => setPage("main"))}
-      <MenuSeparator theme={theme} />
+      <MenuField theme={theme} value={draft} onChangeText={type} label="Folder name" placeholder="Folder name" onSubmit={create} />
+      {item("add", "FolderPlus", "Add folder", create)}
     </>
-  ) : null;
+  );
+  if (!folder) {
+    return (
+      <Menu at={props.at} label="New folder" theme={theme} onClose={onClose}>
+        {newFolder}
+      </Menu>
+    );
+  }
 
-  let body: ReactNode;
-  if (!folder || page === "new") {
-    body = (
-      <>
-        {back}
-        <MenuField theme={theme} value={draft} onChangeText={setDraft} label="Folder name" placeholder="Folder name" onSubmit={create} />
-        {item("add", "FolderPlus", "Add folder", create)}
-      </>
-    );
-  } else if (page === "rename") {
-    const rename = () => {
-      const name = freeName(folder.id);
-      if (name) void save((d) => renameFolder(d, folder.id, name), "Could not rename. Try again.");
-    };
-    body = (
-      <>
-        {back}
-        <MenuField theme={theme} value={draft} onChangeText={setDraft} label="Folder name" selectAll onSubmit={rename} />
-        {item("save", "Check", "Save", rename)}
-      </>
-    );
-  } else if (page === "delete") {
-    const question = `Delete “${folder.name}”?`;
+  function page(key: FolderPage, f: Folder): ReactNode {
+    if (key === "new") return newFolder;
+    if (key === "rename") {
+      const rename = () => {
+        const name = freeName(f.id);
+        if (name) void save((d) => renameFolder(d, f.id, name), "Could not rename. Try again.");
+      };
+      return (
+        <>
+          <MenuField theme={theme} value={draft} onChangeText={type} label="Folder name" selectAll onSubmit={rename} />
+          {item("save", "Check", "Save", rename)}
+        </>
+      );
+    }
+    const question = `Delete “${f.name}”?`;
     const goes = props.count === 1 ? "workspace goes" : `${props.count} workspaces go`;
-    body = (
+    return (
       <>
-        {back}
         <MenuNote theme={theme}>
           {props.count === 0 ? question : `${question} Its ${goes} back to ${folderName(folders.doc, UNSORTED_ID)}.`}
         </MenuNote>
@@ -499,42 +696,61 @@ export function FolderMenu(props: {
           "delete",
           "Trash2",
           "Delete folder",
-          () => void save((d) => deleteFolder(d, folder.id), "Could not delete. Try again."),
+          () => void save((d) => deleteFolder(d, f.id), "Could not delete. Try again."),
           true,
-        )}
-      </>
-    );
-  } else {
-    const newWorkspace = props.onNewWorkspace;
-    body = (
-      <>
-        {newWorkspace
-          ? item("workspace", "Plus", "New workspace", () => {
-              onClose();
-              newWorkspace();
-            })
-          : null}
-        {item("rename", "Pencil", "Rename folder", () => {
-          setDraft(folder.name);
-          setPage("rename");
-        })}
-        {item("new", "FolderPlus", "New folder", () => {
-          setDraft("");
-          setPage("new");
-        })}
-        {folder.id === UNSORTED_ID ? null : (
-          <>
-            <MenuSeparator theme={theme} />
-            {item("delete", "Trash2", "Delete folder", () => setPage("delete"), true)}
-          </>
         )}
       </>
     );
   }
 
+  const newWorkspace = props.onNewWorkspace;
+  const main = (
+    <>
+      {newWorkspace ? (
+        <MenuItem
+          theme={theme}
+          icon="Plus"
+          label="New workspace"
+          onPress={() => {
+            onClose();
+            newWorkspace();
+          }}
+          onHoverIn={sub.onHoverOther}
+        />
+      ) : null}
+      {opener("rename", "Pencil", "Rename folder", () => setDraft(folder.name))}
+      {opener("new", "FolderPlus", "New folder", () => setDraft(""))}
+      {folder.id === UNSORTED_ID ? null : (
+        <>
+          <MenuSeparator theme={theme} />
+          {opener("delete", "Trash2", "Delete folder", undefined, true)}
+        </>
+      )}
+    </>
+  );
+
+  const open = sub.open;
   return (
-    <Menu at={props.at} label={folder ? `Menu for ${folder.name}` : "New folder"} theme={theme} onClose={onClose}>
-      {body}
+    <Menu
+      at={props.at}
+      label={`Menu for ${folder.name}`}
+      theme={theme}
+      onClose={onClose}
+      submenu={
+        sub.beside && open
+          ? { label: FOLDER_PAGE_LABELS[open], anchor: sub.anchor, onEnter: sub.keep, content: page(open, folder) }
+          : null
+      }
+    >
+      {!sub.beside && open ? (
+        <>
+          {item("back", "ChevronLeft", folder.name, sub.close)}
+          <MenuSeparator theme={theme} />
+          {page(open, folder)}
+        </>
+      ) : (
+        main
+      )}
     </Menu>
   );
 }

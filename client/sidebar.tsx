@@ -38,9 +38,10 @@ import {
   sameDirectory,
   type StatusBucket,
   UNSORTED_ID,
+  withoutAutoTitle,
   workspaceFolderOf,
 } from "../shared/model";
-import { debugLog, useAutoImport, useAutoTitle, useDirectory, useFolders } from "./data";
+import { debugLog, useArchiveAbandoned, useAutoImport, useAutoTitle, useDirectory, useFolders } from "./data";
 import { FolderMenu, type MenuPoint, RowMenu, tint } from "./menu";
 import { useMover } from "./move";
 import { BucketIndicator, mostUrgent, ProviderMark, WorkspaceIcon } from "./status";
@@ -126,18 +127,23 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
   useEffect(() => setPlaced(null), [orderKey]);
 
   // A workspace made from a folder has no conversation yet, so Paseo lists no agent
-  // for it. Show it until its first conversation arrives.
+  // for it. Show it until its first conversation arrives or it is archived: on every
+  // device while Paseo lists the workspace, and here from the moment it is made.
+  const autoTitle = ready?.doc.autoTitle;
   const workspaces = useMemo(() => {
     const now = Date.now();
     const known = new Set(listed.map((ws) => ws.id));
+    const waiting = new Map<string, string>();
+    for (const [id, at] of fresh) if (now - Date.parse(at) < FRESH_MS) waiting.set(id, at);
+    for (const [id, at] of Object.entries(autoTitle ?? {})) if (workspaceMeta.has(id)) waiting.set(id, at);
     const extra: ListedWorkspace[] = [];
-    for (const [id, at] of fresh) {
-      if (!known.has(id) && now - Date.parse(at) < FRESH_MS) {
+    for (const [id, at] of waiting) {
+      if (!known.has(id)) {
         extra.push({ id, title: workspaceMeta.get(id)?.title || "New workspace", agents: [], activityAt: at });
       }
     }
     return extra.length > 0 ? [...extra, ...listed] : listed;
-  }, [listed, fresh, workspaceMeta]);
+  }, [listed, fresh, workspaceMeta, autoTitle]);
   useEffect(() => {
     const known = new Set(listed.map((ws) => ws.id));
     if ([...fresh.keys()].some((id) => known.has(id))) {
@@ -148,6 +154,7 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
   useAutoImport(folders, listed, !loading);
   useAutoTitle(folders, listed, workspaceMeta);
   const showing = useShownWorkspace(workspaces);
+  useArchiveAbandoned(folders, !loading, showing.id);
 
   const byFolder = useMemo(() => {
     const map = new Map<string, ListedWorkspace[]>();
@@ -538,6 +545,7 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
           onClose={closeMenu}
           onArchived={(id) => {
             if (freshWorkspaces.delete(id)) setFresh(new Map(freshWorkspaces));
+            void ready.update((d) => withoutAutoTitle(d, [id]));
           }}
         />
       ) : null}
