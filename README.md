@@ -106,3 +106,5 @@ paseo plugin reload paseo-folders   # after changes
 ```
 
 Unit tests cover the folder model in `shared/model.ts` and run with Node's built-in test runner.
+
+To try merging by hand, make throwaway conversations outside any agent, or with `env -u PASEO_AGENT_ID paseo run …`: `paseo run` inside a Paseo agent labels the new conversation as that agent's subagent, and Folders does not list subagents.
