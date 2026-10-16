@@ -25,6 +25,12 @@ Paseo 0.11.1 or newer on both the daemon and the app.
 ## Install
 
 ```bash
+paseo plugin install https://github.com/hanableem/paseo-folders.git
+```
+
+or, from a local copy:
+
+```bash
 paseo plugin install /absolute/path/to/paseo-folders
 ```
 
@@ -116,3 +122,7 @@ Unit tests cover the folder model in `shared/model.ts` and run with Node's built
 To try merging by hand, make throwaway conversations outside any agent, or with `env -u PASEO_AGENT_ID paseo run …`: `paseo run` inside a Paseo agent labels the new conversation as that agent's subagent, and Folders does not list subagents.
 
 To try the sidebar without touching the app window, drive Paseo's bundled web client headless: with Playwright, answer requests for `http://localhost:6767/` from the app's `Resources/app-dist` (and `index.html` for `/` and `/h/…`), let every other request through, and launch Chromium with `--disable-features=LocalNetworkAccessChecks`. The daemon accepts that origin, the client connects to it on its own, and the plugin loads from the daemon as in the app. Folder and workspace rows carry element IDs starting `paseo-folders-drop:`, which a test can use to find them and to drag between them with the mouse. Moves made this way are real.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

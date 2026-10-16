@@ -1,8 +1,14 @@
 {
   "name": "paseo-folders",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hanableem/paseo-folders.git"
+  },
   "files": [
+    "LICENSE",
     "paseo-plugin.json",
     "OVERVIEW.md",
     "README.md",
