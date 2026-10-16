@@ -21,6 +21,7 @@ import {
   mostCommon,
   moveAgent,
   moveFolder,
+  moveFolderAmong,
   moveWorkspace,
   parseDropNodeId,
   parseRoute,
@@ -168,6 +169,30 @@ test("a dragged row lands where its middle passes the middles of the others", ()
   assert.equal(reorderTarget(rows, 0, 500), 3);
   assert.equal(reorderTarget(rows, 3, -500), 0);
   assert.equal(reorderTarget(rows, 7, 0), 7);
+});
+
+test("a new folder can go right after another one, Unsorted included", () => {
+  const doc = moveFolder(withFolders("A", "B"), UNSORTED_ID, 2);
+  assert.deepEqual(names(doc), ["A", "B", "Unsorted"]);
+  assert.deepEqual(names(addFolder(doc, "C", idOf(doc, "A"))), ["A", "C", "B", "Unsorted"]);
+  assert.deepEqual(names(addFolder(doc, "C", idOf(doc, "B"))), ["A", "B", "C", "Unsorted"]);
+  assert.deepEqual(names(addFolder(doc, "C", UNSORTED_ID)), ["A", "B", "Unsorted", "C"]);
+  assert.deepEqual(names(addFolder(doc, "C", "gone")), ["A", "B", "Unsorted", "C"]);
+  assert.equal(addFolder(doc, "A", idOf(doc, "B")), doc);
+});
+
+test("reordering the folders on screen keeps a hidden Unsorted beside a neighbour", () => {
+  const doc = moveFolder(withFolders("A", "B", "C"), UNSORTED_ID, 1);
+  assert.deepEqual(names(doc), ["A", "Unsorted", "B", "C"]);
+  const shown = ["A", "B", "C"].map((n) => idOf(doc, n));
+  const [a, b, c] = shown;
+  assert.deepEqual(names(moveFolderAmong(doc, shown, b, 0)), ["B", "A", "Unsorted", "C"]);
+  assert.deepEqual(names(moveFolderAmong(doc, shown, a, 2)), ["Unsorted", "B", "C", "A"]);
+  assert.deepEqual(names(moveFolderAmong(doc, shown, c, 1)), ["A", "Unsorted", "C", "B"]);
+  assert.equal(moveFolderAmong(doc, shown, b, 1), doc);
+  assert.equal(moveFolderAmong(doc, [a, "gone"], a, 1), doc);
+  const all = folderOrder(doc).map((f) => f.id);
+  assert.deepEqual(names(moveFolderAmong(doc, all, UNSORTED_ID, 3)), ["A", "B", "C", "Unsorted"]);
 });
 
 test("imports create missing folders by name and never move hand-placed agents", () => {

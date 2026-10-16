@@ -206,7 +206,6 @@ export function OverviewScreen({ theme, layout, navigation }: PluginScreenProps)
           ws={menu.ws}
           meta={workspaceMeta.get(menu.ws.id)}
           at={menu.at}
-          bounds={null}
           theme={theme}
           folders={ready}
           workspaces={workspaces}

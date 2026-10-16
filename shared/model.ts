@@ -490,11 +490,14 @@ function nameTaken(doc: FoldersDocument, name: string, exceptId?: string): boole
   return folderOrder(doc).some((f) => f.name === name && f.id !== exceptId);
 }
 
-/** Adds a folder at the end of the list. */
-export function addFolder(doc: FoldersDocument, name: string): FoldersDocument {
+/** Adds a folder at the end of the list, or right after folder `after`, which may be Unsorted. */
+export function addFolder(doc: FoldersDocument, name: string, after?: string): FoldersDocument {
   const trimmed = name.trim();
   if (!trimmed || nameTaken(doc, trimmed)) return doc;
-  return { ...doc, folders: [...doc.folders, { id: newFolderId(doc.folders), name: trimmed }] };
+  const folder = { id: newFolderId(doc.folders), name: trimmed };
+  const added = { ...doc, folders: [...doc.folders, folder] };
+  const index = after === undefined ? -1 : folderOrder(doc).findIndex((f) => f.id === after);
+  return index < 0 ? added : moveFolder(added, folder.id, index + 1);
 }
 
 /** Renames a folder, or Unsorted; refuses a name another one uses. */
@@ -555,6 +558,31 @@ export function moveFolder(doc: FoldersDocument, folderId: string, index: number
   if (next === order) return doc;
   const unsortedAt = next.findIndex((f) => f.id === UNSORTED_ID);
   return { ...doc, folders: next.filter((f) => f.id !== UNSORTED_ID), unsortedAt };
+}
+
+/**
+ * Moves a folder to position `target` among `shown`, the folders on screen in display
+ * order, which may leave out an empty Unsorted. It goes just above the shown folder
+ * that follows it, or just below the one before it at the end, so a hidden folder
+ * stays beside one of its neighbours.
+ */
+export function moveFolderAmong(
+  doc: FoldersDocument,
+  shown: readonly string[],
+  folderId: string,
+  target: number,
+): FoldersDocument {
+  const next = moveInList(shown.map((id) => ({ id })), folderId, target).map((f) => f.id);
+  const at = next.indexOf(folderId);
+  if (at < 0) return doc;
+  const rest = folderOrder(doc)
+    .map((f) => f.id)
+    .filter((id) => id !== folderId);
+  const below = next[at + 1];
+  const neighbour = below ?? next[at - 1];
+  const place = neighbour === undefined ? -1 : rest.indexOf(neighbour);
+  if (place < 0) return doc;
+  return moveFolder(doc, folderId, below === undefined ? place + 1 : place);
 }
 
 /**

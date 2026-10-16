@@ -21,6 +21,7 @@ import {
   dropAction,
   dropNodeId,
   type DropTarget,
+  type Folder,
   folderName,
   folderOrder,
   isDropNodeId,
@@ -28,19 +29,23 @@ import {
   type ListedWorkspace,
   markAutoTitle,
   mostCommon,
+  moveFolderAmong,
+  moveInList,
   moveWorkspace,
   parseDropNodeId,
   parseRoute,
+  reorderTarget,
   sameDirectory,
+  type StatusBucket,
   UNSORTED_ID,
   workspaceFolderOf,
 } from "../shared/model";
 import { debugLog, useAutoImport, useAutoTitle, useDirectory, useFolders } from "./data";
-import { type MenuPoint, RowMenu, tint } from "./menu";
+import { FolderMenu, type MenuPoint, RowMenu, tint } from "./menu";
 import { useMover } from "./move";
 import { BucketIndicator, mostUrgent, ProviderMark, WorkspaceIcon } from "./status";
 import { MoveConfirm } from "./ui";
-import { currentPathname, idAtPoint } from "./web-dom";
+import { currentPathname, idAtPoint, rectOfId } from "./web-dom";
 
 /** Rows listed under an open folder before Show more. */
 const MAX_ROWS_PER_FOLDER = 8;
@@ -56,6 +61,12 @@ const layer = (Platform.OS === "web" ? "fixed" : "absolute") as "absolute";
 
 const sameTarget = (a: DropTarget | null, b: DropTarget | null) => a?.kind === b?.kind && a?.id === b?.id;
 
+/** What a sidebar row drags: a workspace or conversation to file or merge, or a folder to put in order. */
+type Dragged = DragSubject | { kind: "folder"; folder: Folder };
+
+/** Where a dragged folder would go: above this folder, or at the end. */
+const AT_END = "";
+
 /**
  * Folders of workspaces, like Paseo's own list but grouped. One folder is open
  * at a time so every folder stays on screen as a drop target. With a mouse:
@@ -64,7 +75,8 @@ const sameTarget = (a: DropTarget | null, b: DropTarget | null) => a?.kind === b
  * opens into one row per conversation; drag one onto another workspace to move
  * it there, or onto a folder to give it a workspace of its own in that folder.
  * Moves into another project ask first. Right-click or long-press a workspace
- * for the menu, which does the same.
+ * for the menu, which does the same. Folders are dragged into order with the
+ * mouse, and right-clicked (or More on touch screens) to add, rename or delete.
  */
 export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginSidebarItemProps) {
   const toast = useToast();
@@ -79,28 +91,39 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
   /** Workspaces opened to list their conversations. */
   const [opened, setOpened] = useState<ReadonlySet<string>>(new Set());
   const [drag, setDrag] = useState<{
-    subject: DragSubject;
+    subject: Dragged;
     at: MenuPoint;
     /** The sidebar's horizontal extent in window coordinates; Paseo clips anything past it. */
     bounds: { left: number; width: number } | null;
   } | null>(null);
   const [hover, setHover] = useState<DropTarget | null>(null);
-  const [pointerFolder, setPointerFolder] = useState<string | null>(null);
-  const [menu, setMenu] = useState<{
-    ws: ListedWorkspace;
-    at: MenuPoint;
-    bounds: { left: number; width: number } | null;
-  } | null>(null);
+  /** Where a dragged folder would land among the folders shown. */
+  const [reorder, setReorder] = useState<number | null>(null);
+  /** A folder just dropped in a new place, shown there until the saved order arrives. */
+  const [placed, setPlaced] = useState<{ id: string; index: number } | null>(null);
+  const [headerHovered, setHeaderHovered] = useState(false);
+  const [menu, setMenu] = useState<
+    | { kind: "workspace"; ws: ListedWorkspace; at: MenuPoint }
+    /** A folder's menu; with no folder, the header's New folder. */
+    | { kind: "folder"; folderId: string | null; at: MenuPoint }
+    | null
+  >(null);
   const [fresh, setFresh] = useState<ReadonlyMap<string, string>>(() => new Map(freshWorkspaces));
   const [creating, setCreating] = useState<string | null>(null);
   /** A workspace that conversations just moved into, to show once it is listed. */
   const [reveal, setReveal] = useState<string | null>(null);
   const container = useRef<View | null>(null);
-  const dragging = useRef<DragSubject | null>(null);
+  const dragging = useRef<Dragged | null>(null);
+  /** The folders on screen, in order, for working out where a dragged one lands. */
+  const shownFolders = useRef<string[]>([]);
+  /** How far below the top of a dragged folder's row the pointer took hold of it. */
+  const grabOffset = useRef(0);
   /** The folders as they were when the drag began, so rows hold still under the pointer. */
   const frozen = useRef<Map<string, ListedWorkspace[]> | null>(null);
   const ghost = useRef<((at: MenuPoint) => void) | null>(null);
   const ready = folders.status === "ready" ? folders : null;
+  const orderKey = ready ? folderOrder(ready.doc).map((f) => f.id).join("\n") : "";
+  useEffect(() => setPlaced(null), [orderKey]);
 
   // A workspace made from a folder has no conversation yet, so Paseo lists no agent
   // for it. Show it until its first conversation arrives.
@@ -140,7 +163,7 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
   const lists = (drag && frozen.current) || byFolder;
 
   const activeScreen = currentScreen?.screenId ?? null;
-  const muted = { color: theme.colors.foregroundMuted, fontSize: 12 };
+  const web = Platform.OS === "web";
   const unsortedCount = lists.get(UNSORTED_ID)?.length ?? 0;
   // With nothing chosen, show Unsorted open so new workspaces are easy to file.
   const shownFolder = openFolder ?? (unsortedCount > 0 ? UNSORTED_ID : null);
@@ -225,12 +248,34 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
   const hitTest = (x: number, y: number): DropTarget | null => parseDropNodeId(idAtPoint(x, y, isDropNodeId));
 
   const openMenu = (ws: ListedWorkspace, at: MenuPoint) => {
-    setMenu({ ws, at, bounds: null });
-    container.current?.measureInWindow((x, _y, width) => {
-      setMenu((m) => (m && m.ws.id === ws.id ? { ...m, bounds: { left: x, width } } : m));
-    });
+    setMenu({ kind: "workspace", ws, at });
     debugLog("menu", { platform: Platform.OS, x: Math.round(at.x), y: Math.round(at.y) });
   };
+
+  /** Where folder `folderId`, held with the pointer at window height `y`, would land among the folders shown. */
+  const reorderAt = (folderId: string, y: number): number | null => {
+    const rows: { y: number; height: number }[] = [];
+    for (const id of shownFolders.current) {
+      const rect = rectOfId(dropNodeId({ kind: "folder", id }));
+      if (!rect) return null;
+      rows.push(rect);
+    }
+    const from = shownFolders.current.indexOf(folderId);
+    if (from < 0) return null;
+    return reorderTarget(rows, from, y - grabOffset.current - rows[from].y);
+  };
+
+  /** Saves a folder dropped at `index` among the folders shown. */
+  function placeFolder(folderId: string, index: number) {
+    const shown = shownFolders.current;
+    if (!ready || shown.indexOf(folderId) === index) return;
+    setPlaced({ id: folderId, index });
+    void ready.update((d) => moveFolderAmong(d, shown, folderId, index)).then((ok) => {
+      if (ok) return;
+      setPlaced(null);
+      toast.error("Could not reorder. Try again.");
+    });
+  }
 
   function perform(subject: DragSubject, action: DropAction) {
     if (action.kind === "file") {
@@ -252,6 +297,11 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
       frozen.current = byFolder;
       setMenu(null);
       setHover(null);
+      setReorder(null);
+      if (subject.kind === "folder") {
+        const rect = rectOfId(dropNodeId({ kind: "folder", id: subject.folder.id }));
+        grabOffset.current = rect ? y - rect.y : 0;
+      }
       setDrag({ subject, at: { x, y }, bounds: null });
       container.current?.measureInWindow((left, _top, width) => {
         setDrag((d) => (d && d.subject === subject ? { ...d, bounds: { left, width } } : d));
@@ -260,6 +310,12 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
     },
     move(x, y) {
       ghost.current?.({ x, y });
+      const subject = dragging.current;
+      if (subject?.kind === "folder") {
+        const index = reorderAt(subject.folder.id, y);
+        setReorder((r) => (r === index ? r : index));
+        return;
+      }
       const target = hitTest(x, y);
       setHover((h) => (sameTarget(h, target) ? h : target));
     },
@@ -269,6 +325,13 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
       frozen.current = null;
       setDrag(null);
       setHover(null);
+      setReorder(null);
+      if (subject?.kind === "folder") {
+        const index = y === null ? null : reorderAt(subject.folder.id, y);
+        debugLog("folder-drop", { index });
+        if (index !== null) placeFolder(subject.folder.id, index);
+        return;
+      }
       const target = x === null || y === null ? null : hitTest(x, y);
       const action = subject && ready ? dropAction(ready.doc, subject, target) : null;
       debugLog("drag-end", { kind: subject?.kind ?? null, hit: target?.kind ?? null, action: action?.kind ?? null });
@@ -284,15 +347,35 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
     </Pressable>
   );
 
+  // Like the + on folders: New folder shows on hover, and always on touch screens.
+  const addable = Boolean(ready) && expanded && (headerHovered || !web);
   const header = (
-    <SidebarRow
-      id="folders"
-      icon="Folders"
-      label="Folders"
-      active={activeScreen === "overview"}
-      onPress={() => openScreen({ screenId: "overview" })}
-      trailing={chevron(expanded, expanded ? "Collapse folders" : "Expand folders", () => setExpanded((v) => !v))}
-    />
+    <View {...({ onMouseEnter: () => setHeaderHovered(true), onMouseLeave: () => setHeaderHovered(false) } as object)}>
+      <SidebarRow
+        id="folders"
+        icon="Folders"
+        label="Folders"
+        active={activeScreen === "overview"}
+        onPress={() => openScreen({ screenId: "overview" })}
+        trailing={
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+            {ready && expanded ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="New folder"
+                disabled={!addable}
+                onPress={(event) => setMenu({ kind: "folder", folderId: null, at: pointOf(event) })}
+                hitSlop={6}
+                style={{ opacity: addable ? 1 : 0 }}
+              >
+                <Icon name="FolderPlus" size={14} color={theme.colors.foregroundMuted} />
+              </Pressable>
+            ) : null}
+            {chevron(expanded, expanded ? "Collapse folders" : "Expand folders", () => setExpanded((v) => !v))}
+          </View>
+        }
+      />
+    </View>
   );
   if (!ready || !expanded) {
     return (
@@ -303,35 +386,51 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
     );
   }
 
+  // Unsorted keeps the place the user gave it while it holds anything. Empty, it shows
+  // only while a workspace is dragged, at the end, so the rows being aimed at stay where they are.
+  const filing = drag && drag.subject.kind !== "folder" ? drag.subject : null;
+  const order = folderOrder(ready.doc);
+  const unsorted = order.filter((f) => f.id === UNSORTED_ID);
+  const visible =
+    unsortedCount > 0 ? order : [...order.filter((f) => f.id !== UNSORTED_ID), ...(filing ? unsorted : [])];
+  const groups = placed ? moveInList(visible, placed.id, placed.index) : visible;
+  shownFolders.current = groups.map((f) => f.id);
+
+  // A dragged folder would land above this folder, or at the end.
+  const held = drag?.subject.kind === "folder" ? drag.subject.folder.id : null;
+  const heldAt = held ? shownFolders.current.indexOf(held) : -1;
+  const lineAbove =
+    reorder === null || heldAt < 0 || reorder === heldAt
+      ? null
+      : ((reorder < heldAt ? groups[reorder] : groups[reorder + 1])?.id ?? AT_END);
+
   // What the drop would do, shown on the target row and beside the pointer.
-  const action = drag ? dropAction(ready.doc, drag.subject, hover) : null;
+  const action = filing ? dropAction(ready.doc, filing, hover) : null;
   const dropOn = action ? hover : null;
   let hint = "";
-  if (drag && action) {
+  if (filing && action) {
     if (action.kind === "file") hint = `Move to ${nameOf(action.folderId)}`;
     else if (action.kind === "split") hint = `New workspace in ${nameOf(action.folderId)}`;
     else {
-      const from = workspaceMeta.get(drag.subject.ws.id)?.directory;
+      const from = workspaceMeta.get(filing.ws.id)?.directory;
       const to = workspaceMeta.get(action.workspaceId)?.directory;
       const away = from && to && !sameDirectory(from, to) ? " (another project)" : "";
-      const verb = drag.subject.kind === "conversation" ? "Move into" : "Merge into";
+      const verb = filing.kind === "conversation" ? "Move into" : "Merge into";
       hint = `${verb} “${titleOf(action.workspaceId)}”${away}`;
     }
+  } else if (lineAbove !== null) {
+    hint = lineAbove === AT_END ? "Move to the bottom" : `Move above ${nameOf(lineAbove)}`;
   }
 
-  // Unsorted keeps the place the user gave it while it holds anything. Empty, it shows
-  // only during a drag, at the end, so the rows being aimed at stay where they are.
-  const order = folderOrder(ready.doc);
-  const unsorted = order.filter((f) => f.id === UNSORTED_ID);
-  const groups = unsortedCount > 0 ? order : [...order.filter((f) => f.id !== UNSORTED_ID), ...(drag ? unsorted : [])];
+  const menuFolder =
+    menu?.kind === "folder" && menu.folderId !== null ? order.find((f) => f.id === menu.folderId) : undefined;
   return (
-    <View ref={container} collapsable={false} style={menu ? { zIndex: 1000 } : null}>
+    <View ref={container} collapsable={false}>
       {header}
       {/* Paseo's sidebar header does not scroll, so the folders scroll on their own when tall. */}
       <ScrollView style={{ maxHeight: Math.max(240, windowHeight * 0.6) }}>
       {groups.map((folder) => {
         const list = lists.get(folder.id) ?? [];
-        const isUnsorted = folder.id === UNSORTED_ID;
         const open = shownFolder === folder.id;
         const all = showAll.has(folder.id);
         const shown = open ? (all ? list : list.slice(0, MAX_ROWS_PER_FOLDER)) : [];
@@ -342,51 +441,26 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
             else next.add(folder.id);
             return next;
           });
-        // Like Paseo's groups: a collapsed folder shows its most urgent status.
-        const status = open ? "done" : mostUrgent(list);
-        // Like Paseo's project rows: + on hover makes a new workspace here. Touch screens show it on the open folder.
-        const canCreate = !isUnsorted && !drag && (pointerFolder === folder.id || (Platform.OS !== "web" && open));
-        const hoverHandlers = {
-          onMouseEnter: () => setPointerFolder(folder.id),
-          onMouseLeave: () => setPointerFolder((id) => (id === folder.id ? null : id)),
-        } as object;
         return (
           <Fragment key={folder.id}>
-            <View
-              nativeID={dropNodeId({ kind: "folder", id: folder.id })}
-              collapsable={false}
-              {...hoverHandlers}
-            >
-              <SidebarRow
-                id={`folder-${folder.id}`}
-                icon={drag ? "FolderInput" : isUnsorted ? "Inbox" : open ? "FolderOpen" : "Folder"}
-                label={folder.name}
-                active={false}
-                onPress={() => setOpenFolder(open ? "" : folder.id)}
-                trailing={
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                    {isUnsorted ? null : (
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel={`New workspace in ${folder.name}`}
-                        disabled={!canCreate || creating !== null}
-                        onPress={() => void createIn(folder.id, folder.name)}
-                        hitSlop={6}
-                        style={{ opacity: canCreate || creating === folder.id ? 1 : 0 }}
-                      >
-                        <Icon name="Plus" size={14} color={theme.colors.foregroundMuted} />
-                      </Pressable>
-                    )}
-                    <BucketIndicator bucket={status} theme={theme} />
-                    <Text style={muted}>{list.length}</Text>
-                    {chevron(open, open ? `Collapse ${folder.name}` : `Expand ${folder.name}`, () =>
-                      setOpenFolder(open ? "" : folder.id),
-                    )}
-                  </View>
-                }
-              />
-              {dropOn?.kind === "folder" && dropOn.id === folder.id ? <DropHighlight theme={theme} /> : null}
-            </View>
+            <FolderItem
+              folder={folder}
+              count={list.length}
+              open={open}
+              // Like Paseo's groups: a collapsed folder shows its most urgent status.
+              status={open ? "done" : mostUrgent(list)}
+              theme={theme}
+              dragging={drag !== null}
+              filing={filing !== null}
+              lifted={held === folder.id}
+              dropTarget={dropOn?.kind === "folder" && dropOn.id === folder.id}
+              lineAbove={lineAbove === folder.id}
+              creating={creating}
+              dragRef={dragRef}
+              onToggle={() => setOpenFolder(open ? "" : folder.id)}
+              onCreate={folder.id === UNSORTED_ID ? undefined : () => void createIn(folder.id, folder.name)}
+              onMenu={(at) => setMenu({ kind: "folder", folderId: folder.id, at })}
+            />
             {shown.map((ws) => {
               const target = dropOn?.kind === "workspace" && dropOn.id === ws.id;
               const listing = ws.agents.length > 1 && opened.has(ws.id);
@@ -432,24 +506,31 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
           </Fragment>
         );
       })}
+      {lineAbove === AT_END ? <InsertLine theme={theme} /> : null}
       </ScrollView>
       {drag ? (
         <DragGhost
           at={drag.at}
           bounds={drag.bounds}
-          label={drag.subject.kind === "conversation" ? drag.subject.agent.title : drag.subject.ws.title}
+          label={
+            drag.subject.kind === "folder"
+              ? drag.subject.folder.name
+              : drag.subject.kind === "conversation"
+                ? drag.subject.agent.title
+                : drag.subject.ws.title
+          }
           hint={hint}
+          idle={drag.subject.kind === "folder" ? "Drag up or down to reorder" : "Drop on a folder or a workspace"}
           theme={theme}
           follow={ghost}
         />
       ) : null}
-      {menu ? (
+      {menu?.kind === "workspace" ? (
         <RowMenu
           key={menu.ws.id}
           ws={menu.ws}
           meta={workspaceMeta.get(menu.ws.id)}
           at={menu.at}
-          bounds={menu.bounds}
           theme={theme}
           folders={ready}
           workspaces={workspaces}
@@ -458,6 +539,20 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
           onArchived={(id) => {
             if (freshWorkspaces.delete(id)) setFresh(new Map(freshWorkspaces));
           }}
+        />
+      ) : null}
+      {menu?.kind === "folder" && (menu.folderId === null || menuFolder) ? (
+        <FolderMenu
+          key={menu.folderId ?? "new"}
+          folder={menuFolder ?? null}
+          count={menuFolder ? (lists.get(menuFolder.id)?.length ?? 0) : 0}
+          at={menu.at}
+          theme={theme}
+          folders={ready}
+          onNewWorkspace={
+            menuFolder && menuFolder.id !== UNSORTED_ID ? () => void createIn(menuFolder.id, menuFolder.name) : undefined
+          }
+          onClose={closeMenu}
         />
       ) : null}
       <MoveConfirm mover={mover} theme={theme} />
@@ -496,13 +591,13 @@ function useShownWorkspace(workspaces: readonly ListedWorkspace[]): { id: string
 }
 
 interface DragApi {
-  start(subject: DragSubject, x: number, y: number): void;
+  start(subject: Dragged, x: number, y: number): void;
   move(x: number, y: number): void;
   end(x: number | null, y: number | null): void;
 }
 
 /** Mouse-drag handlers for a row; `subject` says what the row drags. Touch screens use the menu instead. */
-function useRowDrag(dragRef: { current: DragApi }, subject: () => DragSubject): GestureResponderHandlers {
+function useRowDrag(dragRef: { current: DragApi }, subject: () => Dragged): GestureResponderHandlers {
   const latest = useRef(subject);
   latest.current = subject;
   return useMemo(
@@ -574,6 +669,8 @@ function DragGhost(props: {
   bounds: { left: number; width: number } | null;
   label: string;
   hint: string;
+  /** Said while no drop would do anything. */
+  idle: string;
   theme: PluginTheme;
   /** Set to a function that moves the ghost, so following the pointer re-renders only this. */
   follow: { current: ((at: MenuPoint) => void) | null };
@@ -616,8 +713,130 @@ function DragGhost(props: {
         {props.label}
       </Text>
       <Text numberOfLines={2} style={{ color: props.hint ? theme.colors.accent : theme.colors.foregroundMuted, fontSize: 12 }}>
-        {props.hint || "Drop on a folder or a workspace"}
+        {props.hint || props.idle}
       </Text>
+    </View>
+  );
+}
+
+/** Where a dragged folder would land: a line between two rows, drawn over them so nothing moves. */
+function InsertLine({ theme }: { theme: PluginTheme }) {
+  return (
+    <View pointerEvents="none" style={{ height: 0, zIndex: 1 }}>
+      <View
+        style={{
+          position: "absolute",
+          left: 12,
+          right: 12,
+          top: -1,
+          height: 2,
+          borderRadius: 1,
+          backgroundColor: theme.colors.accent,
+        }}
+      />
+    </View>
+  );
+}
+
+/**
+ * A folder row: press it to list its workspaces, drag it with the mouse to put it
+ * in order, right-click it or press More for its menu. Like Paseo's project rows,
+ * + makes a workspace in it; both buttons show on hover, and on touch screens on
+ * the open folder.
+ */
+function FolderItem(props: {
+  folder: Folder;
+  count: number;
+  open: boolean;
+  status: StatusBucket;
+  theme: PluginTheme;
+  /** Something is being dragged, so the buttons stay hidden. */
+  dragging: boolean;
+  /** A workspace or conversation is being dragged, and the folder takes it. */
+  filing: boolean;
+  /** This folder is being dragged. */
+  lifted: boolean;
+  dropTarget: boolean;
+  /** A dragged folder would land just above this one. */
+  lineAbove: boolean;
+  /** The folder a workspace is being made in, if any. */
+  creating: string | null;
+  dragRef: { current: DragApi };
+  onToggle(): void;
+  /** Makes a workspace in the folder; left out for Unsorted. */
+  onCreate?(): void;
+  onMenu(at: MenuPoint): void;
+}) {
+  const { folder, theme } = props;
+  const [hovered, setHovered] = useState(false);
+  const panHandlers = useRowDrag(props.dragRef, () => ({ kind: "folder", folder }));
+  const buttons = !props.dragging && (hovered || (Platform.OS !== "web" && props.open));
+  const muted = theme.colors.foregroundMuted;
+  // React Native Web passes these to the page; native platforms ignore them.
+  const pointer = {
+    onMouseEnter: () => setHovered(true),
+    onMouseLeave: () => setHovered(false),
+    onContextMenu: (event: { preventDefault?: () => void }) => {
+      event.preventDefault?.();
+      props.onMenu(pointOf(event));
+    },
+  } as object;
+  let icon = props.open ? "FolderOpen" : "Folder";
+  if (folder.id === UNSORTED_ID) icon = "Inbox";
+  if (props.filing) icon = "FolderInput";
+  return (
+    <View
+      nativeID={dropNodeId({ kind: "folder", id: folder.id })}
+      collapsable={false}
+      style={props.lifted ? { opacity: 0.5 } : null}
+      {...panHandlers}
+      {...pointer}
+    >
+      {props.lineAbove ? <InsertLine theme={theme} /> : null}
+      <SidebarRow
+        id={`folder-${folder.id}`}
+        icon={icon}
+        label={folder.name}
+        active={false}
+        onPress={props.onToggle}
+        trailing={
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+            {props.onCreate ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`New workspace in ${folder.name}`}
+                disabled={!buttons || props.creating !== null}
+                onPress={props.onCreate}
+                hitSlop={6}
+                style={{ opacity: buttons || props.creating === folder.id ? 1 : 0 }}
+              >
+                <Icon name="Plus" size={14} color={muted} />
+              </Pressable>
+            ) : null}
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`More for ${folder.name}`}
+              disabled={!buttons}
+              onPress={(event) => props.onMenu(pointOf(event))}
+              hitSlop={6}
+              style={{ opacity: buttons ? 1 : 0 }}
+            >
+              <Icon name="EllipsisVertical" size={14} color={muted} />
+            </Pressable>
+            <BucketIndicator bucket={props.status} theme={theme} />
+            <Text style={{ color: muted, fontSize: 12 }}>{props.count}</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={props.open ? `Collapse ${folder.name}` : `Expand ${folder.name}`}
+              onPress={props.onToggle}
+              hitSlop={8}
+            >
+              <Icon name={props.open ? "ChevronDown" : "ChevronRight"} size={14} color={muted} />
+            </Pressable>
+          </View>
+        }
+      />
+      {props.dropTarget ? <DropHighlight theme={theme} /> : null}
     </View>
   );
 }
