@@ -21,6 +21,8 @@ import {
   dropAction,
   dropNodeId,
   type DropTarget,
+  folderName,
+  folderOrder,
   isDropNodeId,
   type ListedAgent,
   type ListedWorkspace,
@@ -49,7 +51,6 @@ const ROUTE_POLL_MS = 400;
 /** A workspace made from a folder is listed before its first conversation for this long. */
 const FRESH_MS = 30 * 60_000;
 const OWN_PLUGIN_ID = "paseo-folders";
-const UNSORTED = { id: UNSORTED_ID, name: "Unsorted" };
 /** On the web a fixed layer follows the pointer past the sidebar's edge. */
 const layer = (Platform.OS === "web" ? "fixed" : "absolute") as "absolute";
 
@@ -217,8 +218,7 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
     else toast.show(`Moved to ${folderName}`, { variant: "success" });
   }
 
-  const nameOf = (folderId: string) =>
-    folderId === UNSORTED_ID ? "Unsorted" : ready?.doc.folders.find((f) => f.id === folderId)?.name ?? "";
+  const nameOf = (folderId: string) => (ready ? folderName(ready.doc, folderId) : "");
   const titleOf = (workspaceId: string) => workspaces.find((w) => w.id === workspaceId)?.title ?? "";
 
   /** The row under the pointer, read from the page, so it is right even if rows moved. */
@@ -319,13 +319,11 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
     }
   }
 
-  // Unsorted leads while it holds anything. Empty, it shows only during a drag, at
-  // the end, so the rows being aimed at stay where they are.
-  const groups = [
-    ...(unsortedCount > 0 ? [UNSORTED] : []),
-    ...ready.doc.folders,
-    ...(unsortedCount === 0 && drag ? [UNSORTED] : []),
-  ];
+  // Unsorted keeps the place the user gave it while it holds anything. Empty, it shows
+  // only during a drag, at the end, so the rows being aimed at stay where they are.
+  const order = folderOrder(ready.doc);
+  const unsorted = order.filter((f) => f.id === UNSORTED_ID);
+  const groups = unsortedCount > 0 ? order : [...order.filter((f) => f.id !== UNSORTED_ID), ...(drag ? unsorted : [])];
   return (
     <View ref={container} collapsable={false} style={menu ? { zIndex: 1000 } : null}>
       {header}

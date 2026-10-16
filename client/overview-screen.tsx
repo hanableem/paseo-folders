@@ -19,6 +19,8 @@ import {
   countWorkspacesByFolder,
   deleteFolder,
   type Folder,
+  folderName,
+  folderOrder,
   type FoldersDocument,
   type ListedWorkspace,
   matchesWorkspace,
@@ -101,7 +103,7 @@ export function OverviewScreen({ theme, layout, navigation }: PluginScreenProps)
   function add(name: string): boolean {
     const trimmed = name.trim();
     if (!trimmed) return false;
-    if (doc.folders.some((f) => f.name === trimmed)) {
+    if (folderOrder(doc).some((f) => f.name === trimmed)) {
       toast.show(`There is already a folder named “${trimmed}”.`, { variant: "warning" });
       return false;
     }
@@ -113,7 +115,7 @@ export function OverviewScreen({ theme, layout, navigation }: PluginScreenProps)
   function rename(folderId: string, name: string): boolean {
     const trimmed = name.trim();
     if (!trimmed) return false;
-    if (doc.folders.some((f) => f.name === trimmed && f.id !== folderId)) {
+    if (folderOrder(doc).some((f) => f.name === trimmed && f.id !== folderId)) {
       toast.show(`There is already a folder named “${trimmed}”.`, { variant: "warning" });
       return false;
     }
@@ -147,7 +149,7 @@ export function OverviewScreen({ theme, layout, navigation }: PluginScreenProps)
                       key={ws.id}
                       workspace={ws}
                       notes={doc.notes}
-                      folderName={id === UNSORTED_ID ? "Unsorted" : doc.folders.find((f) => f.id === id)?.name}
+                      folderName={folderName(doc, id)}
                       styles={styles}
                       theme={theme}
                       divider={index > 0}
@@ -162,13 +164,9 @@ export function OverviewScreen({ theme, layout, navigation }: PluginScreenProps)
           ) : null}
 
           <Section label="Folders" styles={styles}>
-            <View style={styles.item}>
-              <Icon name="Inbox" size={16} color={theme.colors.foregroundMuted} />
-              <Text style={[styles.text, { flex: 1, color: theme.colors.foregroundMuted }]}>Unsorted</Text>
-              <Text style={styles.count}>{counts[UNSORTED_ID] ?? 0}</Text>
-            </View>
             <FolderList
-              folders={doc.folders}
+              folders={folderOrder(doc)}
+              unsortedName={folderName(doc, UNSORTED_ID)}
               counts={counts}
               alwaysActions={alwaysActions}
               styles={styles}
@@ -219,7 +217,7 @@ export function OverviewScreen({ theme, layout, navigation }: PluginScreenProps)
       <MoveModal
         open={moving !== null}
         onOpenChange={(open) => (open ? null : setMoving(null))}
-        folders={doc.folders}
+        folders={folderOrder(doc)}
         currentId={moving ? workspaceFolderOf(doc, moving) : UNSORTED_ID}
         onPick={(id) => {
           const ws = moving;
@@ -299,7 +297,9 @@ function useHoldToDrag(handlers: DragHandlers): GestureResponderHandlers {
  * drag it up or down; a line shows where it goes when you let go.
  */
 function FolderList(props: {
+  /** In display order, Unsorted included. */
   folders: Folder[];
+  unsortedName: string;
   counts: Record<string, number>;
   alwaysActions: boolean;
   styles: Styles;
@@ -362,6 +362,7 @@ function FolderList(props: {
         <FolderRow
           key={folder.id}
           folder={folder}
+          unsortedName={props.unsortedName}
           count={props.counts[folder.id] ?? 0}
           index={index}
           lastIndex={folders.length - 1}
@@ -410,10 +411,11 @@ function FolderList(props: {
 /**
  * A folder in the list: its name and workspace count; on hover (always on touch
  * screens) buttons to rename and delete it, which happen in the row. Press and hold
- * the row to drag it to another place.
+ * the row to drag it to another place. Unsorted can be renamed and moved but not deleted.
  */
 function FolderRow(props: {
   folder: Folder;
+  unsortedName: string;
   count: number;
   index: number;
   lastIndex: number;
@@ -433,6 +435,8 @@ function FolderRow(props: {
 }) {
   const { folder, styles, theme } = props;
   const c = theme.colors;
+  const isUnsorted = folder.id === UNSORTED_ID;
+  const icon = isUnsorted ? "Inbox" : "Folder";
   const [mode, setMode] = useState<"view" | "rename" | "delete">("view");
   const [draft, setDraft] = useState(folder.name);
   const [hovered, setHovered] = useState(false);
@@ -449,7 +453,7 @@ function FolderRow(props: {
     };
     return (
       <View style={row} {...measure}>
-        <Icon name="Folder" size={16} color={c.foregroundMuted} />
+        <Icon name={icon} size={16} color={c.foregroundMuted} />
         <TextInput
           value={draft}
           onChangeText={setDraft}
@@ -473,7 +477,7 @@ function FolderRow(props: {
     const what =
       props.count === 0
         ? `Delete “${folder.name}”?`
-        : `Delete “${folder.name}”? Its ${props.count === 1 ? "workspace goes" : `${props.count} workspaces go`} back to Unsorted.`;
+        : `Delete “${folder.name}”? Its ${props.count === 1 ? "workspace goes" : `${props.count} workspaces go`} back to ${props.unsortedName}.`;
     return (
       <View style={row} {...measure}>
         <Icon name="Trash2" size={16} color={c.statusDanger} />
@@ -518,7 +522,7 @@ function FolderRow(props: {
           style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0, borderWidth: 1, borderColor: c.accent, borderRadius: 8 }}
         />
       ) : null}
-      <Icon name="Folder" size={16} color={c.foregroundMuted} />
+      <Icon name={icon} size={16} color={c.foregroundMuted} />
       <Text style={[styles.text, { flex: 1 }]} numberOfLines={1}>
         {folder.name}
       </Text>
@@ -533,7 +537,9 @@ function FolderRow(props: {
             }}
             theme={theme}
           />
-          <IconButton icon="Trash2" label={`Delete ${folder.name}`} onPress={() => setMode("delete")} theme={theme} />
+          {isUnsorted ? null : (
+            <IconButton icon="Trash2" label={`Delete ${folder.name}`} onPress={() => setMode("delete")} theme={theme} />
+          )}
         </View>
       ) : null}
       <Text style={styles.count}>{props.count}</Text>

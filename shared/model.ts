@@ -38,6 +38,10 @@ export const FoldersDocumentSchema = z.object({
    * untitled and take their first conversation's title.
    */
   autoTitle: z.record(z.string(), z.string()).default({}),
+  /** The user's name for Unsorted. Empty means "Unsorted". */
+  unsortedName: z.string().max(60).default(""),
+  /** How many folders come before Unsorted in the display order. */
+  unsortedAt: z.number().int().min(0).default(0),
 });
 export type FoldersDocument = z.infer<typeof FoldersDocumentSchema>;
 
@@ -469,20 +473,46 @@ export function placeNames(from: Place, to: Place): [string, string] {
   return [short(from.directory), short(to.directory)];
 }
 
+/** A folder's name. Unsorted's is the one the user gave it, or "Unsorted". */
+export function folderName(doc: FoldersDocument, folderId: string): string {
+  if (folderId === UNSORTED_ID) return doc.unsortedName.trim() || "Unsorted";
+  return doc.folders.find((f) => f.id === folderId)?.name ?? "";
+}
+
+/** The folders in display order, with Unsorted (id UNSORTED_ID) in its place. */
+export function folderOrder(doc: FoldersDocument): Folder[] {
+  const at = Math.min(doc.unsortedAt, doc.folders.length);
+  return [...doc.folders.slice(0, at), { id: UNSORTED_ID, name: folderName(doc, UNSORTED_ID) }, ...doc.folders.slice(at)];
+}
+
+/** Whether another folder, or Unsorted, already uses `name`. */
+function nameTaken(doc: FoldersDocument, name: string, exceptId?: string): boolean {
+  return folderOrder(doc).some((f) => f.name === name && f.id !== exceptId);
+}
+
+/** Adds a folder at the end of the list. */
 export function addFolder(doc: FoldersDocument, name: string): FoldersDocument {
   const trimmed = name.trim();
-  if (!trimmed || doc.folders.some((f) => f.name === trimmed)) return doc;
+  if (!trimmed || nameTaken(doc, trimmed)) return doc;
   return { ...doc, folders: [...doc.folders, { id: newFolderId(doc.folders), name: trimmed }] };
 }
 
+/** Renames a folder, or Unsorted; refuses a name another one uses. */
 export function renameFolder(doc: FoldersDocument, folderId: string, name: string): FoldersDocument {
   const trimmed = name.trim();
-  if (!trimmed || doc.folders.some((f) => f.name === trimmed && f.id !== folderId)) return doc;
+  if (!trimmed || nameTaken(doc, trimmed, folderId)) return doc;
+  // Naming it "Unsorted" again goes back to the default.
+  if (folderId === UNSORTED_ID) return { ...doc, unsortedName: trimmed === "Unsorted" ? "" : trimmed };
   return { ...doc, folders: doc.folders.map((f) => (f.id === folderId ? { ...f, name: trimmed } : f)) };
 }
 
-/** Deleting a folder sends its workspaces and agents back to Unsorted and lets imports place them again. */
+/**
+ * Deleting a folder sends its workspaces and agents back to Unsorted and lets imports
+ * place them again. Unsorted itself cannot be deleted.
+ */
 export function deleteFolder(doc: FoldersDocument, folderId: string): FoldersDocument {
+  const index = doc.folders.findIndex((f) => f.id === folderId);
+  if (index < 0) return doc;
   const assignments: Record<string, string> = {};
   const manual = { ...doc.manual };
   for (const [agentId, id] of Object.entries(doc.assignments)) {
@@ -498,6 +528,8 @@ export function deleteFolder(doc: FoldersDocument, folderId: string): FoldersDoc
   return {
     ...doc,
     folders: doc.folders.filter((f) => f.id !== folderId),
+    // Unsorted keeps its place among the folders that are left.
+    unsortedAt: index < doc.unsortedAt ? doc.unsortedAt - 1 : doc.unsortedAt,
     assignments,
     manual,
     workspaceAssignments,
@@ -516,10 +548,13 @@ export function moveInList<T extends { id: string }>(list: T[], id: string, inde
   return next;
 }
 
-/** Moves a folder to position `index` in the list; `doc` itself when it stays put. */
+/** Moves a folder, or Unsorted, to position `index` in folderOrder; `doc` itself when it stays put. */
 export function moveFolder(doc: FoldersDocument, folderId: string, index: number): FoldersDocument {
-  const folders = moveInList(doc.folders, folderId, index);
-  return folders === doc.folders ? doc : { ...doc, folders };
+  const order = folderOrder(doc);
+  const next = moveInList(order, folderId, index);
+  if (next === order) return doc;
+  const unsortedAt = next.findIndex((f) => f.id === UNSORTED_ID);
+  return { ...doc, folders: next.filter((f) => f.id !== UNSORTED_ID), unsortedAt };
 }
 
 /**

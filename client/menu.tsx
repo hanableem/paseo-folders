@@ -4,6 +4,8 @@ import { copyText, Icon, useToast } from "@getpaseo/plugin/client/react-native";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Dimensions, Platform, Pressable, type PressableStateCallbackType, Text, TextInput, View } from "react-native";
 import {
+  folderName,
+  folderOrder,
   type ListedWorkspace,
   mergeTargets,
   moveWorkspace,
@@ -119,8 +121,6 @@ export function RowMenu(props: {
   const back = item("back", "ChevronLeft", ws.title, () => setPage("main"));
   const chevron = <Icon name="ChevronRight" size={14} color={c.foregroundMuted} />;
 
-  const folderName = (id: string) =>
-    id === UNSORTED_ID ? "Unsorted" : folders.doc.folders.find((f) => f.id === id)?.name ?? "";
   const muted = { color: c.foregroundMuted, fontSize: 12 };
   const mergeInto = (target: ListedWorkspace) => {
     onClose();
@@ -169,7 +169,7 @@ export function RowMenu(props: {
               () => mergeInto(t),
               where === current ? undefined : (
                 <Text style={[muted, { maxWidth: 72 }]} numberOfLines={1}>
-                  {folderName(where)}
+                  {folderName(folders.doc, where)}
                 </Text>
               ),
             );
@@ -192,7 +192,7 @@ export function RowMenu(props: {
       </>
     );
   } else if (page === "move") {
-    const choices = [...folders.doc.folders, { id: UNSORTED_ID, name: "Unsorted" }];
+    const choices = folderOrder(folders.doc);
     rows = choices.length + 1;
     body = (
       <>

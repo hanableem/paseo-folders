@@ -8,13 +8,13 @@ Paseo groups workspaces by project directory. If most of your work runs in the s
 
 ## Features
 
-- A **Folders** section at the top of the sidebar: **Unsorted** first, then one row per folder with its workspace count. One folder is open at a time and lists eight workspaces, with **Show more** and **Show less** for the rest. Rows show Paseo's status (running ring, attention and error dots) and, for a single conversation, its provider's mark.
+- A **Folders** section at the top of the sidebar: one row per folder with its workspace count, and **Unsorted** for workspaces in no folder, first unless you move it. One folder is open at a time and lists eight workspaces, with **Show more** and **Show less** for the rest. Rows show Paseo's status (running ring, attention and error dots) and, for a single conversation, its provider's mark.
 - The workspace Paseo is showing is highlighted, as in Paseo's own list. Native mobile apps cannot read which one that is, so there the highlight marks the workspace last opened from the folders.
 - Hover a folder and press **+** (on touch screens, the open folder shows it) to make a new workspace already filed there. It is a local workspace in the project most of that folder's workspaces use, and opens on Paseo's own new-tab screen. Paseo names a workspace after the prompt it was created with; this one starts empty, so once its first conversation has answered, it takes that conversation's title unless you have named it. For another project or a worktree, use Paseo's **New workspace** and move the result.
 - With a mouse, drag a workspace onto a folder to move it, or onto another workspace to merge it into that one. A workspace with several conversations shows their count with an arrow; click it to list them, then drag one onto another workspace to move it there, or onto a folder to give it a workspace of its own in that folder. While you drag, the target row is outlined and a label under the pointer says what letting go will do. Moves into another project ask first.
 - Right-click a workspace, or long-press it on touch screens, for a menu modelled on Paseo's workspace menu: copy path, copy branch name, copy resume command and agent id, rename, **Move to folder**, **Merge into workspace**, **Split off a conversation**, archive.
 - Merging moves a workspace's conversations into another workspace, where they become tabs, and archives the emptied workspace. Splitting moves one conversation into a new workspace next to it. See [Merge and split workspaces](#merge-and-split-workspaces-experimental).
-- A management screen, laid out like Paseo's settings, to create, rename and delete folders, put them in order (press and hold a folder, then drag it), and search every workspace and the conversations inside it.
+- A management screen, laid out like Paseo's settings, to create, rename and delete folders, put them in order (press and hold a folder, then drag it), and search every workspace and the conversations inside it. Unsorted can be renamed and moved like a folder, but not deleted.
 - An optional suggestions file, so a script can propose folders and one-line notes per conversation.
 - Folder data lives in Paseo plugin settings on the host, so your desktop and mobile apps share it.
 
@@ -61,7 +61,7 @@ Default location: `<Paseo home>/paseo-folders/suggestions.json` (`~/.paseo` unle
 
 The plugin imports when the app starts and every ten minutes. An import that changes nothing saves nothing.
 
-To read placements back, a script can read the plugin's settings document on the host: `<Paseo home>/plugin-settings/<installation id>/folders.json`. `values.workspaceAssignments` and `values.workspaceManual` hold the workspaces you placed by hand. `values.autoTitle` lists workspaces made from a folder that are still waiting for their first conversation's title.
+To read placements back, a script can read the plugin's settings document on the host: `<Paseo home>/plugin-settings/<installation id>/folders.json`. `values.workspaceAssignments` and `values.workspaceManual` hold the workspaces you placed by hand. `values.autoTitle` lists workspaces made from a folder that are still waiting for their first conversation's title. `values.unsortedName` and `values.unsortedAt` hold the name you gave Unsorted (empty for the default) and how many folders come before it.
 
 ## Merge and split workspaces (experimental)
 

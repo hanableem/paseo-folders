@@ -2,6 +2,7 @@ import { usePaseo, useRpc } from "@getpaseo/plugin/client";
 import { useToast } from "@getpaseo/plugin/client/react-native";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  folderName,
   type FoldersDocument,
   keepFolder,
   type ListedAgent,
@@ -300,7 +301,7 @@ export function useMover(options: {
         const where =
           folderId === undefined
             ? ""
-            : ` in ${folderId === UNSORTED_ID ? "Unsorted" : doc.folders.find((f) => f.id === folderId)?.name ?? "its folder"}`;
+            : ` in ${folderName(doc, folderId) || "its folder"}`;
         toast.show(`${quoted(agent.title)} has its own workspace now${where}`, { variant: "success" });
         if (out.note) toast.show(out.note, { variant: "warning" });
         latest.current.open(out.workspaceId, agent.title);

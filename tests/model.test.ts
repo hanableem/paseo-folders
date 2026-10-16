@@ -7,7 +7,9 @@ import {
   deleteFolder,
   dropAction,
   dropNodeId,
+  folderName,
   folderOf,
+  folderOrder,
   FoldersDocumentSchema,
   groupWorkspaces,
   keepFolder,
@@ -119,21 +121,42 @@ test("deleting a folder returns its workspaces and agents to Unsorted", () => {
   assert.equal(doc.workspaceManual.w, undefined);
 });
 
-test("renaming refuses a name another folder already uses; reordering stays in bounds", () => {
+const names = (doc: ReturnType<typeof empty>) => folderOrder(doc).map((f) => f.name);
+
+test("renaming refuses a name another folder or Unsorted uses; reordering counts Unsorted and stays in bounds", () => {
   let doc = withFolders("A", "B");
   const [a, b] = doc.folders;
   assert.equal(renameFolder(doc, b.id, "A"), doc);
+  assert.equal(renameFolder(doc, b.id, "Unsorted"), doc);
   doc = renameFolder(doc, b.id, "C");
-  assert.deepEqual(doc.folders.map((f) => f.name), ["A", "C"]);
-  assert.equal(moveFolder(doc, a.id, -1), doc);
-  assert.equal(moveFolder(doc, a.id, 0), doc);
-  doc = moveFolder(doc, a.id, 1);
-  assert.deepEqual(doc.folders.map((f) => f.name), ["C", "A"]);
+  assert.deepEqual(names(doc), ["Unsorted", "A", "C"]);
+  assert.equal(moveFolder(doc, a.id, 1), doc);
+  doc = moveFolder(doc, a.id, 2);
+  assert.deepEqual(names(doc), ["Unsorted", "C", "A"]);
+  doc = moveFolder(doc, a.id, -5);
+  assert.deepEqual(names(doc), ["A", "Unsorted", "C"]);
   doc = withFolders("A", "B", "C", "D");
   doc = moveFolder(doc, idOf(doc, "A"), 9);
-  assert.deepEqual(doc.folders.map((f) => f.name), ["B", "C", "D", "A"]);
-  doc = moveFolder(doc, idOf(doc, "D"), 1);
-  assert.deepEqual(doc.folders.map((f) => f.name), ["B", "D", "C", "A"]);
+  assert.deepEqual(names(doc), ["Unsorted", "B", "C", "D", "A"]);
+});
+
+test("Unsorted moves and takes a name but cannot be deleted, and keeps its place when folders go", () => {
+  assert.deepEqual(names(withFolders("X")), ["Unsorted", "X"]);
+  let doc = withFolders("A", "B", "C");
+  doc = moveFolder(doc, UNSORTED_ID, 2);
+  assert.deepEqual(names(doc), ["A", "B", "Unsorted", "C"]);
+  doc = renameFolder(doc, UNSORTED_ID, " Inbox ");
+  assert.equal(folderName(doc, UNSORTED_ID), "Inbox");
+  assert.equal(renameFolder(doc, UNSORTED_ID, "A"), doc);
+  assert.equal(addFolder(doc, "Inbox"), doc);
+  assert.equal(deleteFolder(doc, UNSORTED_ID), doc);
+  doc = deleteFolder(doc, idOf(doc, "A"));
+  assert.deepEqual(names(doc), ["B", "Inbox", "C"]);
+  doc = deleteFolder(doc, idOf(doc, "C"));
+  doc = addFolder(doc, "D");
+  assert.deepEqual(names(doc), ["B", "Inbox", "D"]);
+  assert.equal(folderName(doc, idOf(doc, "D")), "D");
+  assert.equal(renameFolder(doc, UNSORTED_ID, "Unsorted").unsortedName, "");
 });
 
 test("a dragged row lands where its middle passes the middles of the others", () => {

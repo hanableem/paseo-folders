@@ -6,7 +6,7 @@ To move a workspace, drag it onto another folder with the mouse, or right-click 
 
 To put conversations together, drag a workspace onto another workspace, or choose Merge into workspace from its menu: its conversations become tabs in the other workspace, and the emptied one is archived. To take one out, click the count beside a workspace holding several to list its conversations, then drag one onto another workspace, or onto a folder to give it a workspace of its own there; Split off a conversation in the menu does the same. A label under the pointer says what letting go will do. Moves into another project ask first. Conversations keep their history; a running one waits until it has finished. Conversations from another project can join only if they are Claude conversations. This uses Paseo internals and is experimental.
 
-Workspaces that are in no folder appear under Unsorted, which opens by default when it has anything in it.
+Workspaces that are in no folder appear under Unsorted, which opens by default when it has anything in it. You can rename Unsorted and move it among the folders; it cannot be deleted.
 
 Open Folders from the sidebar to create, rename or delete folders, put them in order by pressing and holding one and dragging it, and search across every workspace and the conversations inside it. Deleting a folder moves its workspaces back to Unsorted; nothing is archived or deleted in Paseo.
 

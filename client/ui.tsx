@@ -250,6 +250,7 @@ export function WorkspaceRow(props: {
 export function MoveModal(props: {
   open: boolean;
   onOpenChange(open: boolean): void;
+  /** In display order, Unsorted included. */
   folders: readonly Folder[];
   currentId: string;
   onPick(folderId: string): void;
@@ -257,7 +258,6 @@ export function MoveModal(props: {
   theme: PluginTheme;
 }) {
   const { styles, theme } = props;
-  const choices = [...props.folders, { id: UNSORTED_ID, name: "Unsorted" }];
   return (
     <Modal
       title="Move to folder"
@@ -267,7 +267,7 @@ export function MoveModal(props: {
     >
       <Modal.Content>
         <View style={{ gap: 6 }}>
-          {choices.map((f) => {
+          {props.folders.map((f) => {
             const current = f.id === props.currentId;
             return (
               <Pressable
