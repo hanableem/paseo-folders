@@ -241,12 +241,20 @@ export function useDirectory(): DirectoryState {
       });
 
     // The live list covers one page (Paseo allows at most 200). A full pass each
-    // minute picks up anything beyond it and refreshes workspace titles.
+    // minute picks up anything beyond it, drops conversations the daemon no longer
+    // has (deleted ones have lingered in the live list) and refreshes workspace titles.
     const reconcile = async () => {
       try {
+        const known = new Set(map.keys());
         const full = await fetchDirectory(paseoRef.current);
         if (stopped) return;
         setWorkspaceMeta(full.workspaceMeta);
+        const listed = new Set(full.agents.map((agent) => agent.id));
+        let dropped = 0;
+        for (const id of known) {
+          if (!listed.has(id) && map.delete(id)) dropped += 1;
+        }
+        if (dropped > 0) debugLog("dir-drop", { dropped });
         for (const agent of full.agents) if (!map.has(agent.id)) map.set(agent.id, agent);
         flush();
         setLoading(false);
