@@ -15,7 +15,7 @@ import type { ReadyFolders, WorkspaceMeta } from "./data";
 import type { Mover } from "./move";
 import { listenOutsidePress, nodeContains } from "./web-dom";
 
-type Page = "main" | "move" | "rename" | "merge" | "split" | "confirm";
+type Page = "main" | "move" | "rename" | "merge" | "split";
 
 /** Where the pointer was, in window coordinates. */
 export interface MenuPoint {
@@ -59,15 +59,13 @@ export function RowMenu(props: {
   workspaces?: readonly ListedWorkspace[];
   /** Leave out to hide merging and splitting. */
   mover?: Mover;
-  /** Opens on the question whether to merge into this workspace, as after a drop. */
-  confirmMerge?: ListedWorkspace;
   onClose(): void;
   onArchived?(workspaceId: string): void;
 }) {
-  const { ws, meta, theme, folders, mover, confirmMerge, onClose } = props;
+  const { ws, meta, theme, folders, mover, onClose } = props;
   const paseo = usePaseo();
   const toast = useToast();
-  const [page, setPage] = useState<Page>(confirmMerge ? "confirm" : "main");
+  const [page, setPage] = useState<Page>("main");
   const [draft, setDraft] = useState(ws.title);
   const [query, setQuery] = useState("");
   const surface = useRef<View | null>(null);
@@ -124,8 +122,6 @@ export function RowMenu(props: {
   const folderName = (id: string) =>
     id === UNSORTED_ID ? "Unsorted" : folders.doc.folders.find((f) => f.id === id)?.name ?? "";
   const muted = { color: c.foregroundMuted, fontSize: 12 };
-  const quoted = (title: string) => `“${title}”`;
-  const conversations = (n: number) => (n === 1 ? "Its conversation becomes a tab" : `Its ${n} conversations become tabs`);
   const mergeInto = (target: ListedWorkspace) => {
     onClose();
     if (mover) void mover.merge(ws, target);
@@ -133,21 +129,7 @@ export function RowMenu(props: {
 
   let body: ReactNode;
   let rows: number;
-  if (page === "confirm" && confirmMerge) {
-    rows = 5;
-    body = (
-      <>
-        <View style={{ marginHorizontal: 12, paddingVertical: 6 }}>
-          <Text style={{ color: c.foreground, fontSize: 13, lineHeight: 18 }} numberOfLines={4}>
-            {`Merge ${quoted(ws.title)} into ${quoted(confirmMerge.title)}? ${conversations(ws.agents.length)} there.`}
-          </Text>
-        </View>
-        {separator("s1")}
-        {item("confirm", "Merge", "Merge", () => mergeInto(confirmMerge))}
-        {item("cancel", "X", "Cancel", onClose)}
-      </>
-    );
-  } else if (page === "merge") {
+  if (page === "merge") {
     const targets = mergeTargets(folders.doc, props.workspaces ?? [], ws, query).slice(0, MAX_TARGETS);
     rows = 3 + Math.max(1, targets.length);
     body = (

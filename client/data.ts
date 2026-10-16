@@ -43,6 +43,8 @@ export interface WorkspaceMeta {
   /** Root of the project the workspace belongs to. */
   projectRoot: string;
   projectId: string;
+  /** The project's name as Paseo shows it; empty when unknown. */
+  projectName: string;
 }
 
 export interface Directory {
@@ -96,7 +98,7 @@ function titlesOf(meta: Map<string, WorkspaceMeta>): Map<string, string> {
 }
 
 /** Workspace ID -> title, directory and branch. Archived workspaces may be missing. */
-async function listWorkspaceMeta(paseo: PaseoApi): Promise<Map<string, WorkspaceMeta>> {
+export async function listWorkspaceMeta(paseo: PaseoApi): Promise<Map<string, WorkspaceMeta>> {
   const meta = new Map<string, WorkspaceMeta>();
   try {
     let cursor: string | undefined;
@@ -111,6 +113,7 @@ async function listWorkspaceMeta(paseo: PaseoApi): Promise<Map<string, Workspace
           branch: ws.gitRuntime?.currentBranch ?? "",
           projectRoot: ws.projectRootPath ?? ws.workspaceDirectory ?? "",
           projectId: ws.projectId ?? "",
+          projectName: ws.projectCustomName?.trim() || ws.projectDisplayName?.trim() || "",
         });
       }
       const next = result.pageInfo?.nextCursor;
@@ -131,6 +134,8 @@ export interface DirectoryState {
   loading: boolean;
   error: string | null;
   reload(): Promise<void>;
+  /** Re-reads every conversation now, as after a move: Paseo's live list can keep deleted ones. */
+  refresh(): void;
 }
 
 type AgentPayload = {
@@ -182,6 +187,7 @@ export function useDirectory(): DirectoryState {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [generation, setGeneration] = useState(0);
+  const reconcileNow = useRef<() => void>(() => {});
 
   useEffect(() => {
     let stopped = false;
@@ -263,9 +269,11 @@ export function useDirectory(): DirectoryState {
       }
     };
     void reconcile();
+    reconcileNow.current = () => void reconcile();
     const titleTimer = setInterval(() => void reconcile(), 60_000);
     return () => {
       stopped = true;
+      reconcileNow.current = () => {};
       lifetime.abort();
       unsubscribe?.();
       if (flushTimer !== null) clearTimeout(flushTimer);
@@ -276,7 +284,8 @@ export function useDirectory(): DirectoryState {
   const agents = useMemo(() => [...agentMap.values()], [agentMap]);
   const workspaces = useMemo(() => groupWorkspaces(agents, titlesOf(workspaceMeta)), [agents, workspaceMeta]);
   const reload = useCallback(async () => setGeneration((g) => g + 1), []);
-  return { agents, workspaceMeta, workspaces, loading, error, reload };
+  const refresh = useCallback(() => reconcileNow.current(), []);
+  return { agents, workspaceMeta, workspaces, loading, error, reload, refresh };
 }
 
 export type ReadyFolders = Extract<FoldersState, { status: "ready" }>;

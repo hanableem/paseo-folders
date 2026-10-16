@@ -21,18 +21,24 @@ import {
 import { importSuggestions, useDirectory, useFolders } from "./data";
 import { type MenuPoint, RowMenu } from "./menu";
 import { useMover } from "./move";
-import { Button, MoveModal, SearchBox, type Styles, useStyles, WorkspaceRow } from "./ui";
+import { Button, MoveConfirm, MoveModal, SearchBox, type Styles, useStyles, WorkspaceRow } from "./ui";
 
 /** Manage folders, search every workspace, and import suggestions. */
 export function OverviewScreen({ theme, layout, navigation }: PluginScreenProps) {
   const styles = useStyles(theme, layout.compact);
   const toast = useToast();
   const folders = useFolders();
-  const { workspaces, workspaceMeta, loading, error } = useDirectory();
+  const { workspaces, workspaceMeta, loading, error, refresh } = useDirectory();
   const [menu, setMenu] = useState<{ ws: ListedWorkspace; at: MenuPoint } | null>(null);
   const closeMenu = useCallback(() => setMenu(null), []);
   const readSuggestions = useRpc(readSuggestionsRpc);
-  const mover = useMover(folders, (workspaceId) => navigation?.openWorkspace({ workspaceId }));
+  const mover = useMover({
+    folders,
+    workspaces,
+    meta: workspaceMeta,
+    open: (workspaceId) => navigation?.openWorkspace({ workspaceId }),
+    refresh,
+  });
   const [query, setQuery] = useState("");
   const [newName, setNewName] = useState("");
   const [moving, setMoving] = useState<ListedWorkspace | null>(null);
@@ -179,6 +185,7 @@ export function OverviewScreen({ theme, layout, navigation }: PluginScreenProps)
         styles={styles}
         theme={theme}
       />
+      <MoveConfirm mover={mover} theme={theme} />
     </View>
   );
 }

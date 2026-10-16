@@ -5,6 +5,8 @@ import {
   applyForcedToWorkspaces,
   countWorkspacesByFolder,
   deleteFolder,
+  dropAction,
+  dropNodeId,
   folderOf,
   FoldersDocumentSchema,
   groupWorkspaces,
@@ -18,12 +20,15 @@ import {
   moveAgent,
   moveFolder,
   moveWorkspace,
+  parseDropNodeId,
   parseRoute,
+  placeNames,
   renameAgent,
   renameFolder,
   SuggestionsSchema,
   agentBucket,
   resumeCommand,
+  sameDirectory,
   UNSORTED_ID,
   workspaceBucket,
   withoutAutoTitle,
@@ -252,4 +257,51 @@ test("merge targets list the workspace's own folder first, newest first, and fol
   assert.deepEqual(mergeTargets(doc, workspaces, source, "").map((w) => w.id), ["wd", "wb", "wc"]);
   assert.deepEqual(mergeTargets(doc, workspaces, source, "tax").map((w) => w.id), ["wc"]);
   assert.deepEqual(mergeTargets(doc, workspaces, source, "dishes"), [], "never itself");
+});
+
+test("drops file a workspace, move conversations into another workspace, or give one its own workspace", () => {
+  let doc = withFolders("Chores", "Money");
+  doc = { ...doc, assignments: { a: idOf(doc, "Chores"), b: idOf(doc, "Chores") } };
+  const listed = groupWorkspaces([agent("a", "wa"), agent("b", "wa"), agent("c", "wc")], new Map());
+  const two = listed.find((w) => w.id === "wa")!;
+  const one = listed.find((w) => w.id === "wc")!;
+  const whole = { kind: "workspace" as const, ws: two };
+  const single = { kind: "conversation" as const, ws: two, agent: two.agents[0] };
+  const folder = (name: string) => ({ kind: "folder" as const, id: name === "Unsorted" ? UNSORTED_ID : idOf(doc, name) });
+  const workspace = (id: string) => ({ kind: "workspace" as const, id });
+
+  assert.deepEqual(dropAction(doc, whole, folder("Money")), { kind: "file", folderId: idOf(doc, "Money") });
+  assert.equal(dropAction(doc, whole, folder("Chores")), null, "already in that folder");
+  assert.deepEqual(dropAction(doc, whole, workspace("wc")), { kind: "merge", workspaceId: "wc" });
+  assert.equal(dropAction(doc, whole, workspace("wa")), null, "onto itself");
+  assert.equal(dropAction(doc, whole, null), null);
+  assert.deepEqual(dropAction(doc, single, workspace("wc")), { kind: "merge", workspaceId: "wc" });
+  assert.equal(dropAction(doc, single, workspace("wa")), null, "back onto its own workspace");
+  assert.deepEqual(dropAction(doc, single, folder("Chores")), { kind: "split", folderId: idOf(doc, "Chores") }, "its own folder too");
+  assert.deepEqual(dropAction(doc, single, folder("Unsorted")), { kind: "split", folderId: UNSORTED_ID });
+  const blank = { id: "wn", title: "New workspace", agents: [], activityAt: "2026-01-01T00:00:00Z" };
+  assert.equal(dropAction(doc, { kind: "workspace", ws: blank }, workspace("wc")), null, "nothing to move");
+  assert.deepEqual(dropAction(doc, { kind: "workspace", ws: one }, workspace("wn")), { kind: "merge", workspaceId: "wn" });
+});
+
+test("drop targets round-trip through element IDs, conversation rows standing for their workspace", () => {
+  const ws = { kind: "workspace" as const, id: "wks_1" };
+  assert.deepEqual(parseDropNodeId(dropNodeId(ws)), ws);
+  assert.deepEqual(parseDropNodeId(dropNodeId(ws, "agent:with/odd chars")), ws);
+  assert.deepEqual(parseDropNodeId(dropNodeId({ kind: "folder", id: UNSORTED_ID })), { kind: "folder", id: UNSORTED_ID });
+  assert.equal(parseDropNodeId("root"), null);
+  assert.equal(parseDropNodeId("paseo-folders-drop:shelf:x"), null);
+  assert.equal(parseDropNodeId(null), null);
+});
+
+test("directories compare without trailing slashes; places read apart by project, else by path", () => {
+  assert.ok(sameDirectory("/Users/me/notes/", "/Users/me/notes"));
+  assert.ok(!sameDirectory("/Users/me/notes", "/Users/me/notes-2"));
+  assert.ok(sameDirectory("/", "//"));
+  const notes = { directory: "/Users/me/notes", projectName: "notes" };
+  const code = { directory: "/Users/me/Developer/app", projectName: "app" };
+  assert.deepEqual(placeNames(notes, code), ["notes", "app"]);
+  const worktree = { directory: "/Users/me/Developer/app-wt", projectName: "app" };
+  assert.deepEqual(placeNames(code, worktree), ["~/Developer/app", "~/Developer/app-wt"]);
+  assert.deepEqual(placeNames({ directory: "/srv/a", projectName: "" }, code), ["/srv/a", "~/Developer/app"]);
 });

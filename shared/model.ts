@@ -388,6 +388,87 @@ export function mergeTargets(
   return [...near.sort(byRecentActivity), ...far.sort(byRecentActivity)];
 }
 
+/** What is dragged in the sidebar: a whole workspace, or one of its conversations. */
+export type DragSubject =
+  | { kind: "workspace"; ws: ListedWorkspace }
+  | { kind: "conversation"; ws: ListedWorkspace; agent: ListedAgent };
+
+/** A row a drag can land on. A conversation row counts as its workspace. */
+export interface DropTarget {
+  kind: "folder" | "workspace";
+  id: string;
+}
+
+/**
+ * What a drop does: file a workspace in a folder, move conversations into another
+ * workspace (all of a dragged workspace's, or the one dragged conversation), or
+ * give a dragged conversation a workspace of its own in a folder.
+ */
+export type DropAction =
+  | { kind: "file"; folderId: string }
+  | { kind: "merge"; workspaceId: string }
+  | { kind: "split"; folderId: string };
+
+/** What dropping `subject` on `target` does, or null when it would change nothing. */
+export function dropAction(doc: FoldersDocument, subject: DragSubject, target: DropTarget | null): DropAction | null {
+  if (!target) return null;
+  if (target.kind === "folder") {
+    if (subject.kind === "conversation") return { kind: "split", folderId: target.id };
+    return workspaceFolderOf(doc, subject.ws) === target.id ? null : { kind: "file", folderId: target.id };
+  }
+  if (target.id === subject.ws.id || subject.ws.agents.length === 0) return null;
+  return { kind: "merge", workspaceId: target.id };
+}
+
+const DROP_ID_PREFIX = "paseo-folders-drop:";
+
+/**
+ * The element ID that marks a sidebar row as a drop target, so a drop is matched
+ * to whatever row is under the pointer when it lands. `part` tells apart several
+ * rows of one target.
+ */
+export function dropNodeId(target: DropTarget, part = ""): string {
+  const tail = part ? `:${encodeURIComponent(part)}` : "";
+  return `${DROP_ID_PREFIX}${target.kind}:${encodeURIComponent(target.id)}${tail}`;
+}
+
+/** The drop target an element ID from `dropNodeId` marks; null for any other ID. */
+export function parseDropNodeId(id: string | null | undefined): DropTarget | null {
+  if (!id?.startsWith(DROP_ID_PREFIX)) return null;
+  const [kind, raw] = id.slice(DROP_ID_PREFIX.length).split(":");
+  if ((kind !== "folder" && kind !== "workspace") || !raw) return null;
+  try {
+    return { kind, id: decodeURIComponent(raw) };
+  } catch {
+    return null;
+  }
+}
+
+export function isDropNodeId(id: string): boolean {
+  return id.startsWith(DROP_ID_PREFIX);
+}
+
+/** Directories match when they differ only by trailing slashes; the server compares real paths. */
+export function sameDirectory(a: string, b: string): boolean {
+  const plain = (p: string) => p.replace(/\/+$/, "") || "/";
+  return plain(a) === plain(b);
+}
+
+/** Where a workspace works: its directory, and its project's name when Paseo knows it. */
+export interface Place {
+  directory: string;
+  projectName: string;
+}
+
+/** Names for two places that tell them apart: project names when those differ, else the directories. */
+export function placeNames(from: Place, to: Place): [string, string] {
+  const short = (p: string) => p.replace(/^\/(?:Users|home)\/[^/]+(?=\/|$)/, "~");
+  const a = from.projectName.trim();
+  const b = to.projectName.trim();
+  if (a && b && a !== b) return [a, b];
+  return [short(from.directory), short(to.directory)];
+}
+
 export function addFolder(doc: FoldersDocument, name: string): FoldersDocument {
   const trimmed = name.trim();
   if (!trimmed || doc.folders.some((f) => f.name === trimmed)) return doc;

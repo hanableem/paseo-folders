@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { Pressable, Text, TextInput, View } from "react-native";
 import { type Folder, type ListedWorkspace, UNSORTED_ID } from "../shared/model";
 import { formatDay } from "./data";
+import type { Mover } from "./move";
 import { WorkspaceIcon } from "./status";
 
 export function useStyles(theme: PluginTheme, compact: boolean) {
@@ -185,6 +186,31 @@ export function MoveModal(props: {
               </Pressable>
             );
           })}
+        </View>
+      </Modal.Content>
+    </Modal>
+  );
+}
+
+/** The mover's question, centred over the window: Cancel, or go ahead. */
+export function MoveConfirm(props: { mover: Mover; theme: PluginTheme }) {
+  const { mover, theme } = props;
+  const styles = useStyles(theme, false);
+  const question = mover.question;
+  return (
+    <Modal
+      title={question?.title ?? ""}
+      icon={<Icon name="ArrowRightLeft" size={18} color={theme.colors.foreground} />}
+      open={question !== null}
+      onOpenChange={(open) => {
+        if (!open) mover.answer(false);
+      }}
+    >
+      <Modal.Content>
+        <Text style={[styles.text, { lineHeight: 20 }]}>{question?.message ?? ""}</Text>
+        <View style={[styles.toolbar, { justifyContent: "flex-end" }]}>
+          <Button label="Cancel" onPress={() => mover.answer(false)} styles={styles} />
+          <Button label={question?.action ?? "OK"} primary onPress={() => mover.answer(true)} styles={styles} />
         </View>
       </Modal.Content>
     </Modal>

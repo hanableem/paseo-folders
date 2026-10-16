@@ -4,7 +4,7 @@ Hover a folder and press + to make a new workspace already in that folder. It op
 
 To move a workspace, drag it onto another folder with the mouse, or right-click it (long-press on touch screens) and choose Move to folder. The same menu copies the path, branch, resume command and agent id, renames and archives. One folder is open at a time, so every folder stays on screen as a drop target.
 
-To put conversations together, drag a workspace onto another workspace and confirm, or choose Merge into workspace from its menu: its conversations become tabs in the other workspace, and the emptied one is archived. Split off a conversation does the reverse for a workspace holding several. Conversations keep their history; a running one waits until it has finished. Conversations from another project can join only if they are Claude conversations. This uses Paseo internals and is experimental.
+To put conversations together, drag a workspace onto another workspace, or choose Merge into workspace from its menu: its conversations become tabs in the other workspace, and the emptied one is archived. To take one out, click the count beside a workspace holding several to list its conversations, then drag one onto another workspace, or onto a folder to give it a workspace of its own there; Split off a conversation in the menu does the same. A label under the pointer says what letting go will do. Moves into another project ask first. Conversations keep their history; a running one waits until it has finished. Conversations from another project can join only if they are Claude conversations. This uses Paseo internals and is experimental.
 
 Workspaces that are in no folder appear under Unsorted, which opens by default when it has anything in it.
 
