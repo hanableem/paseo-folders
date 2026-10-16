@@ -23,6 +23,7 @@ import {
   parseDropNodeId,
   parseRoute,
   placeNames,
+  reorderTarget,
   renameAgent,
   renameFolder,
   SuggestionsSchema,
@@ -125,8 +126,25 @@ test("renaming refuses a name another folder already uses; reordering stays in b
   doc = renameFolder(doc, b.id, "C");
   assert.deepEqual(doc.folders.map((f) => f.name), ["A", "C"]);
   assert.equal(moveFolder(doc, a.id, -1), doc);
+  assert.equal(moveFolder(doc, a.id, 0), doc);
   doc = moveFolder(doc, a.id, 1);
   assert.deepEqual(doc.folders.map((f) => f.name), ["C", "A"]);
+  doc = withFolders("A", "B", "C", "D");
+  doc = moveFolder(doc, idOf(doc, "A"), 9);
+  assert.deepEqual(doc.folders.map((f) => f.name), ["B", "C", "D", "A"]);
+  doc = moveFolder(doc, idOf(doc, "D"), 1);
+  assert.deepEqual(doc.folders.map((f) => f.name), ["B", "D", "C", "A"]);
+});
+
+test("a dragged row lands where its middle passes the middles of the others", () => {
+  const rows = [0, 48, 96, 144].map((y) => ({ y, height: 48 }));
+  assert.equal(reorderTarget(rows, 1, 0), 1);
+  assert.equal(reorderTarget(rows, 1, 20), 1);
+  assert.equal(reorderTarget(rows, 1, 30), 2);
+  assert.equal(reorderTarget(rows, 1, -30), 0);
+  assert.equal(reorderTarget(rows, 0, 500), 3);
+  assert.equal(reorderTarget(rows, 3, -500), 0);
+  assert.equal(reorderTarget(rows, 7, 0), 7);
 });
 
 test("imports create missing folders by name and never move hand-placed agents", () => {

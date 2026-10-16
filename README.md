@@ -14,7 +14,7 @@ Paseo groups workspaces by project directory. If most of your work runs in the s
 - With a mouse, drag a workspace onto a folder to move it, or onto another workspace to merge it into that one. A workspace with several conversations shows their count with an arrow; click it to list them, then drag one onto another workspace to move it there, or onto a folder to give it a workspace of its own in that folder. While you drag, the target row is outlined and a label under the pointer says what letting go will do. Moves into another project ask first.
 - Right-click a workspace, or long-press it on touch screens, for a menu modelled on Paseo's workspace menu: copy path, copy branch name, copy resume command and agent id, rename, **Move to folder**, **Merge into workspace**, **Split off a conversation**, archive.
 - Merging moves a workspace's conversations into another workspace, where they become tabs, and archives the emptied workspace. Splitting moves one conversation into a new workspace next to it. See [Merge and split workspaces](#merge-and-split-workspaces-experimental).
-- A management screen, laid out like Paseo's settings, to create, rename, reorder and delete folders, and to search every workspace and the conversations inside it.
+- A management screen, laid out like Paseo's settings, to create, rename and delete folders, put them in order (press and hold a folder, then drag it), and search every workspace and the conversations inside it.
 - An optional suggestions file, so a script can propose folders and one-line notes per conversation.
 - Folder data lives in Paseo plugin settings on the host, so your desktop and mobile apps share it.
 

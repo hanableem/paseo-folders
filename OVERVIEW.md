@@ -8,7 +8,7 @@ To put conversations together, drag a workspace onto another workspace, or choos
 
 Workspaces that are in no folder appear under Unsorted, which opens by default when it has anything in it.
 
-Open Folders from the sidebar to create, rename, reorder or delete folders, and to search across every workspace and the conversations inside it. Deleting a folder moves its workspaces back to Unsorted; nothing is archived or deleted in Paseo.
+Open Folders from the sidebar to create, rename or delete folders, put them in order by pressing and holding one and dragging it, and search across every workspace and the conversations inside it. Deleting a folder moves its workspaces back to Unsorted; nothing is archived or deleted in Paseo.
 
 ## Suggestions file
 

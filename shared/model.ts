@@ -505,13 +505,38 @@ export function deleteFolder(doc: FoldersDocument, folderId: string): FoldersDoc
   };
 }
 
-export function moveFolder(doc: FoldersDocument, folderId: string, delta: -1 | 1): FoldersDocument {
-  const i = doc.folders.findIndex((f) => f.id === folderId);
-  const j = i + delta;
-  if (i < 0 || j < 0 || j >= doc.folders.length) return doc;
-  const folders = [...doc.folders];
-  [folders[i], folders[j]] = [folders[j], folders[i]];
-  return { ...doc, folders };
+/** `list` with item `id` moved to position `index`, clamped to the ends; `list` itself when it stays put. */
+export function moveInList<T extends { id: string }>(list: T[], id: string, index: number): T[] {
+  const from = list.findIndex((item) => item.id === id);
+  const to = Math.max(0, Math.min(list.length - 1, Math.round(index)));
+  if (from < 0 || to === from) return list;
+  const next = [...list];
+  const [item] = next.splice(from, 1);
+  next.splice(to, 0, item);
+  return next;
+}
+
+/** Moves a folder to position `index` in the list; `doc` itself when it stays put. */
+export function moveFolder(doc: FoldersDocument, folderId: string, index: number): FoldersDocument {
+  const folders = moveInList(doc.folders, folderId, index);
+  return folders === doc.folders ? doc : { ...doc, folders };
+}
+
+/**
+ * Where a row dragged by `dy` from position `from` would land among rows laid out
+ * at `rows` (tops and heights, in list order). It passes a neighbour once it covers
+ * half of it: a row above stays above while its middle is above the dragged row's
+ * top, and a row below moves above once its middle is above the dragged row's bottom.
+ */
+export function reorderTarget(rows: readonly { y: number; height: number }[], from: number, dy: number): number {
+  const dragged = rows[from];
+  if (!dragged) return from;
+  const top = dragged.y + dy;
+  const bottom = top + dragged.height;
+  return rows.filter((row, i) => {
+    const middle = row.y + row.height / 2;
+    return i < from ? middle < top : i > from && middle < bottom;
+  }).length;
 }
 
 export interface MergeResult {
