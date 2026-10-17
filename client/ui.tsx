@@ -50,8 +50,6 @@ export function useStyles(theme: PluginTheme, compact: boolean) {
       buttonText: { color: c.foreground, fontSize: 13 },
       primary: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 6, backgroundColor: c.accent },
       primaryText: { color: c.accentForeground, fontSize: 13, fontWeight: "600" as const },
-      dangerButton: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 6, backgroundColor: c.statusDanger },
-      dangerText: { color: "#ffffff", fontSize: 13, fontWeight: "600" as const },
       // Laid out like Paseo's settings pages: a centred column of grouped cards.
       page: {
         width: "100%" as const,
@@ -97,12 +95,11 @@ export function Button(props: {
   onPress(): void;
   styles: Styles;
   primary?: boolean;
-  danger?: boolean;
   disabled?: boolean;
 }) {
   const { styles } = props;
-  const look = props.danger ? styles.dangerButton : props.primary ? styles.primary : styles.button;
-  const text = props.danger ? styles.dangerText : props.primary ? styles.primaryText : styles.buttonText;
+  const look = props.primary ? styles.primary : styles.button;
+  const text = props.primary ? styles.primaryText : styles.buttonText;
   return (
     <Pressable
       accessibilityRole="button"

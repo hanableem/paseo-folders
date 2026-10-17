@@ -393,14 +393,11 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
     );
   }
 
-  // Unsorted keeps the place the user gave it while it holds anything. Empty, it shows
-  // only while a workspace is dragged, at the end, so the rows being aimed at stay where they are.
+  // Unsorted shows in the place the user gave it even when empty, so it is always there
+  // to drop on and no row appears or goes while something is dragged.
   const filing = drag && drag.subject.kind !== "folder" ? drag.subject : null;
   const order = folderOrder(ready.doc);
-  const unsorted = order.filter((f) => f.id === UNSORTED_ID);
-  const visible =
-    unsortedCount > 0 ? order : [...order.filter((f) => f.id !== UNSORTED_ID), ...(filing ? unsorted : [])];
-  const groups = placed ? moveInList(visible, placed.id, placed.index) : visible;
+  const groups = placed ? moveInList(order, placed.id, placed.index) : order;
   shownFolders.current = groups.map((f) => f.id);
 
   // A dragged folder would land above this folder, or at the end.

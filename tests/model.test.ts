@@ -217,6 +217,40 @@ test("imports create missing folders by name and never move hand-placed agents",
   assert.equal(again.doc, result.doc, "an unchanged import must not produce a new document to save");
 });
 
+test("imports do not make a deleted folder again until the user makes one with that name", () => {
+  let doc = withFolders("Daily", "News");
+  doc = moveAgent(doc, "x", idOf(doc, "Daily"));
+  doc = deleteFolder(doc, idOf(doc, "News"));
+  const s = SuggestionsSchema.parse({ version: 1, folders: ["Daily", "News"], assignments: { x: "News", y: "News" }, force: ["x"] });
+  const result = mergeSuggestions(doc, s, "2026-01-05T00:00:00Z");
+  assert.deepEqual(result.doc.folders.map((f) => f.name), ["Daily"]);
+  assert.equal(result.forDeletedFolders, 2, "forced or not, a suggestion for a deleted folder is left out");
+  assert.equal(folderOf(result.doc, "x"), idOf(doc, "Daily"), "and the agent stays where it was");
+  assert.equal(folderOf(result.doc, "y"), UNSORTED_ID);
+  assert.equal(result.doc, doc, "an import that only meets deleted folders saves nothing");
+  const remade = addFolder(doc, "News");
+  assert.deepEqual(remade.deletedFolderNames, []);
+  assert.equal(folderOf(mergeSuggestions(remade, s, "2026-01-05T00:00:00Z").doc, "y"), idOf(remade, "News"));
+});
+
+test("a renamed folder keeps the conversations a suggestions file files under its old name", () => {
+  let doc = withFolders("Health");
+  const health = idOf(doc, "Health");
+  doc = renameFolder(doc, health, "Health & Fitness");
+  const s = SuggestionsSchema.parse({ version: 1, folders: ["Health"], assignments: { x: "Health" } });
+  const result = mergeSuggestions(doc, s, "2026-01-06T00:00:00Z");
+  assert.equal(result.createdFolders, 0);
+  assert.equal(folderOf(result.doc, "x"), health);
+  const back = renameFolder(doc, health, "Health");
+  assert.deepEqual(back.formerFolderNames, { "Health & Fitness": health });
+  const taken = addFolder(doc, "Health");
+  assert.equal(folderOf(mergeSuggestions(taken, s, "2026-01-06T00:00:00Z").doc, "x"), idOf(taken, "Health"));
+  const gone = deleteFolder(doc, health);
+  assert.deepEqual([...gone.deletedFolderNames].sort(), ["Health", "Health & Fitness"]);
+  assert.deepEqual(gone.formerFolderNames, {});
+  assert.equal(mergeSuggestions(gone, s, "2026-01-06T00:00:00Z").createdFolders, 0);
+});
+
 test("a forced suggestion re-files a hand-placed agent and its single-conversation workspace", () => {
   let doc = withFolders("A", "B");
   doc = moveWorkspace(moveAgent(doc, "x", idOf(doc, "A")), "w", idOf(doc, "A"));

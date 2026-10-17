@@ -42,6 +42,13 @@ export const FoldersDocumentSchema = z.object({
   unsortedName: z.string().max(60).default(""),
   /** How many folders come before Unsorted in the display order. */
   unsortedAt: z.number().int().min(0).default(0),
+  /**
+   * Old name -> folder ID, for folders the user renamed, so a suggestions file that
+   * still uses the old name files into the renamed folder.
+   */
+  formerFolderNames: z.record(z.string(), z.string()).default({}),
+  /** Names of folders the user deleted. Imports do not make them again. */
+  deletedFolderNames: z.array(z.string()).default([]),
 });
 export type FoldersDocument = z.infer<typeof FoldersDocumentSchema>;
 
@@ -490,32 +497,58 @@ function nameTaken(doc: FoldersDocument, name: string, exceptId?: string): boole
   return folderOrder(doc).some((f) => f.name === name && f.id !== exceptId);
 }
 
+/** A name the user gives a folder no longer stands for a renamed or a deleted one. */
+function claimName(doc: FoldersDocument, name: string): FoldersDocument {
+  if (!(name in doc.formerFolderNames) && !doc.deletedFolderNames.includes(name)) return doc;
+  const formerFolderNames = { ...doc.formerFolderNames };
+  delete formerFolderNames[name];
+  return { ...doc, formerFolderNames, deletedFolderNames: doc.deletedFolderNames.filter((n) => n !== name) };
+}
+
 /** Adds a folder at the end of the list, or right after folder `after`, which may be Unsorted. */
 export function addFolder(doc: FoldersDocument, name: string, after?: string): FoldersDocument {
   const trimmed = name.trim();
   if (!trimmed || nameTaken(doc, trimmed)) return doc;
   const folder = { id: newFolderId(doc.folders), name: trimmed };
-  const added = { ...doc, folders: [...doc.folders, folder] };
+  const added = { ...claimName(doc, trimmed), folders: [...doc.folders, folder] };
   const index = after === undefined ? -1 : folderOrder(doc).findIndex((f) => f.id === after);
   return index < 0 ? added : moveFolder(added, folder.id, index + 1);
 }
 
-/** Renames a folder, or Unsorted; refuses a name another one uses. */
+/**
+ * Renames a folder, or Unsorted; refuses a name another one uses. A folder's old
+ * name keeps leading imports to it.
+ */
 export function renameFolder(doc: FoldersDocument, folderId: string, name: string): FoldersDocument {
   const trimmed = name.trim();
   if (!trimmed || nameTaken(doc, trimmed, folderId)) return doc;
   // Naming it "Unsorted" again goes back to the default.
   if (folderId === UNSORTED_ID) return { ...doc, unsortedName: trimmed === "Unsorted" ? "" : trimmed };
-  return { ...doc, folders: doc.folders.map((f) => (f.id === folderId ? { ...f, name: trimmed } : f)) };
+  const old = doc.folders.find((f) => f.id === folderId)?.name;
+  if (old === undefined || old === trimmed) return doc;
+  const renamed = claimName(doc, trimmed);
+  return {
+    ...renamed,
+    folders: doc.folders.map((f) => (f.id === folderId ? { ...f, name: trimmed } : f)),
+    formerFolderNames: { ...renamed.formerFolderNames, [old]: folderId },
+  };
 }
 
 /**
- * Deleting a folder sends its workspaces and agents back to Unsorted and lets imports
- * place them again. Unsorted itself cannot be deleted.
+ * Deleting a folder sends its workspaces and agents back to Unsorted, where imports
+ * may place them in other folders. Imports do not make the folder again, under its
+ * name or a former one, until the user makes a folder with that name. Unsorted
+ * itself cannot be deleted.
  */
 export function deleteFolder(doc: FoldersDocument, folderId: string): FoldersDocument {
   const index = doc.folders.findIndex((f) => f.id === folderId);
   if (index < 0) return doc;
+  const deleted = new Set(doc.deletedFolderNames).add(doc.folders[index].name);
+  const formerFolderNames: Record<string, string> = {};
+  for (const [name, id] of Object.entries(doc.formerFolderNames)) {
+    if (id === folderId) deleted.add(name);
+    else formerFolderNames[name] = id;
+  }
   const assignments: Record<string, string> = {};
   const manual = { ...doc.manual };
   for (const [agentId, id] of Object.entries(doc.assignments)) {
@@ -537,6 +570,8 @@ export function deleteFolder(doc: FoldersDocument, folderId: string): FoldersDoc
     manual,
     workspaceAssignments,
     workspaceManual,
+    formerFolderNames,
+    deletedFolderNames: [...deleted],
   };
 }
 
@@ -562,9 +597,10 @@ export function moveFolder(doc: FoldersDocument, folderId: string, index: number
 
 /**
  * Moves a folder to position `target` among `shown`, the folders on screen in display
- * order, which may leave out an empty Unsorted. It goes just above the shown folder
- * that follows it, or just below the one before it at the end, so a hidden folder
- * stays beside one of its neighbours.
+ * order, which can run ahead of the saved order while a reorder is being saved, or
+ * leave folders out. It goes just above the shown folder that follows it, or just
+ * below the one before it at the end, so a folder not shown stays beside one of its
+ * neighbours.
  */
 export function moveFolderAmong(
   doc: FoldersDocument,
@@ -607,16 +643,29 @@ export interface MergeResult {
   createdFolders: number;
   placed: number;
   keptManual: number;
+  /** Agents suggested for a folder the user deleted, left where they were. */
+  forDeletedFolders: number;
 }
 
-/** Applies a suggestions file. Hand-placed agents stay where the user put them. */
+/**
+ * Applies a suggestions file. Hand-placed agents stay where the user put them. A
+ * renamed folder still answers to its old name; a folder the user deleted is not
+ * made again, and agents suggested for it stay where they are.
+ */
 export function mergeSuggestions(doc: FoldersDocument, s: Suggestions, now: string): MergeResult {
   const folders = [...doc.folders];
   let createdFolders = 0;
-  const idByName = new Map(folders.map((f) => [f.name, f.id]));
-  const ensure = (name: string): string => {
+  const idByName = new Map<string, string>();
+  for (const [name, id] of Object.entries(doc.formerFolderNames)) {
+    if (folders.some((f) => f.id === id)) idByName.set(name, id);
+  }
+  // A folder's current name wins over another folder's former one.
+  for (const f of folders) idByName.set(f.name, f.id);
+  const deleted = new Set(doc.deletedFolderNames);
+  const ensure = (name: string): string | null => {
     const found = idByName.get(name);
     if (found) return found;
+    if (deleted.has(name)) return null;
     const id = newFolderId(folders);
     folders.push({ id, name });
     idByName.set(name, id);
@@ -629,12 +678,17 @@ export function mergeSuggestions(doc: FoldersDocument, s: Suggestions, now: stri
   const forced = new Set(s.force);
   let placed = 0;
   let keptManual = 0;
+  let forDeletedFolders = 0;
   for (const [agentId, name] of Object.entries(s.assignments)) {
     if (doc.manual[agentId] && !forced.has(agentId)) {
       keptManual += 1;
       continue;
     }
     const id = ensure(name);
+    if (id === null) {
+      forDeletedFolders += 1;
+      continue;
+    }
     if (assignments[agentId] !== id) {
       assignments[agentId] = id;
       placed += 1;
@@ -643,13 +697,14 @@ export function mergeSuggestions(doc: FoldersDocument, s: Suggestions, now: stri
   }
   const notesChanged = Object.entries(s.notes).some(([agentId, note]) => doc.notes[agentId] !== note);
   if (createdFolders === 0 && placed === 0 && !notesChanged) {
-    return { doc, createdFolders, placed, keptManual };
+    return { doc, createdFolders, placed, keptManual, forDeletedFolders };
   }
   return {
     doc: { ...doc, folders, assignments, manual, notes: { ...doc.notes, ...s.notes }, lastImportAt: now },
     createdFolders,
     placed,
     keptManual,
+    forDeletedFolders,
   };
 }
 

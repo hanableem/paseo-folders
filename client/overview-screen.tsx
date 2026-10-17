@@ -123,6 +123,17 @@ export function OverviewScreen({ theme, layout, navigation }: PluginScreenProps)
     return true;
   }
 
+  /** Deletes a folder at once and says where its workspaces went. */
+  async function remove(folderId: string) {
+    const name = folderName(doc, folderId);
+    const count = counts[folderId] ?? 0;
+    if (!(await save((d) => deleteFolder(d, folderId)))) return;
+    const went = count === 1 ? "Its workspace went" : `Its ${count} workspaces went`;
+    toast.show(count === 0 ? `Deleted “${name}”` : `Deleted “${name}”. ${went} to ${folderName(doc, UNSORTED_ID)}.`, {
+      variant: "success",
+    });
+  }
+
   const alwaysActions = showsActionsAlways(layout.compact);
   const imported = doc.lastImportAt ? `Last import ${formatTime(doc.lastImportAt)}` : "Not imported yet";
   return (
@@ -166,14 +177,13 @@ export function OverviewScreen({ theme, layout, navigation }: PluginScreenProps)
           <Section label="Folders" styles={styles}>
             <FolderList
               folders={folderOrder(doc)}
-              unsortedName={folderName(doc, UNSORTED_ID)}
               counts={counts}
               alwaysActions={alwaysActions}
               styles={styles}
               theme={theme}
               onDragging={setDragging}
               onRename={rename}
-              onDelete={(folderId) => void save((d) => deleteFolder(d, folderId))}
+              onDelete={(folderId) => void remove(folderId)}
               onMove={(folderId, index) => save((d) => moveFolder(d, folderId, index))}
             />
             <AddFolderRow styles={styles} theme={theme} onAdd={add} />
@@ -183,7 +193,7 @@ export function OverviewScreen({ theme, layout, navigation }: PluginScreenProps)
             <View style={[styles.item, { paddingVertical: 12 }]}>
               <Text style={[styles.muted, { flex: 1, fontSize: 13, lineHeight: 19 }]}>
                 Another tool can write folder suggestions as JSON. Conversations you moved by hand are never moved by
-                an import. Leave the path empty to use the default location.
+                an import, and folders you deleted are not made again. Leave the path empty to use the default location.
               </Text>
             </View>
             <SuggestionsPath
@@ -298,7 +308,6 @@ function useHoldToDrag(handlers: DragHandlers): GestureResponderHandlers {
 function FolderList(props: {
   /** In display order, Unsorted included. */
   folders: Folder[];
-  unsortedName: string;
   counts: Record<string, number>;
   alwaysActions: boolean;
   styles: Styles;
@@ -361,7 +370,6 @@ function FolderList(props: {
         <FolderRow
           key={folder.id}
           folder={folder}
-          unsortedName={props.unsortedName}
           count={props.counts[folder.id] ?? 0}
           index={index}
           lastIndex={folders.length - 1}
@@ -409,12 +417,12 @@ function FolderList(props: {
 
 /**
  * A folder in the list: its name and workspace count; on hover (always on touch
- * screens) buttons to rename and delete it, which happen in the row. Press and hold
- * the row to drag it to another place. Unsorted can be renamed and moved but not deleted.
+ * screens) buttons to rename it in the row and to delete it at once, which sends its
+ * workspaces to Unsorted. Press and hold the row to drag it to another place.
+ * Unsorted can be renamed and moved but not deleted.
  */
 function FolderRow(props: {
   folder: Folder;
-  unsortedName: string;
   count: number;
   index: number;
   lastIndex: number;
@@ -436,7 +444,7 @@ function FolderRow(props: {
   const c = theme.colors;
   const isUnsorted = folder.id === UNSORTED_ID;
   const icon = isUnsorted ? "Inbox" : "Folder";
-  const [mode, setMode] = useState<"view" | "rename" | "delete">("view");
+  const [mode, setMode] = useState<"view" | "rename">("view");
   const [draft, setDraft] = useState(folder.name);
   const [hovered, setHovered] = useState(false);
   const dragHandlers = useHoldToDrag(props.drag);
@@ -467,23 +475,6 @@ function FolderRow(props: {
           accessibilityLabel="Folder name"
         />
         <Button label="Save" primary disabled={!draft.trim()} onPress={submit} styles={styles} />
-        <Button label="Cancel" onPress={() => setMode("view")} styles={styles} />
-      </View>
-    );
-  }
-
-  if (mode === "delete") {
-    const what =
-      props.count === 0
-        ? `Delete “${folder.name}”?`
-        : `Delete “${folder.name}”? Its ${props.count === 1 ? "workspace goes" : `${props.count} workspaces go`} back to ${props.unsortedName}.`;
-    return (
-      <View style={row} {...measure}>
-        <Icon name="Trash2" size={16} color={c.statusDanger} />
-        <Text style={[styles.text, { flex: 1 }]} numberOfLines={2}>
-          {what}
-        </Text>
-        <Button label="Delete" danger onPress={props.onDelete} styles={styles} />
         <Button label="Cancel" onPress={() => setMode("view")} styles={styles} />
       </View>
     );
@@ -537,7 +528,7 @@ function FolderRow(props: {
             theme={theme}
           />
           {isUnsorted ? null : (
-            <IconButton icon="Trash2" label={`Delete ${folder.name}`} onPress={() => setMode("delete")} theme={theme} />
+            <IconButton icon="Trash2" label={`Delete ${folder.name}`} onPress={props.onDelete} theme={theme} />
           )}
         </View>
       ) : null}

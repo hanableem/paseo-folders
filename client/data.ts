@@ -369,6 +369,7 @@ export async function importSuggestions(
     changed = next !== doc;
     if (changed) {
       summary = `${merged.placed} placed, ${merged.createdFolders} new folders, ${merged.keptManual} kept where you put them`;
+      if (merged.forDeletedFolders > 0) summary += `, ${merged.forDeletedFolders} left out because you deleted their folder`;
     }
     return next;
   });

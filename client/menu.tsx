@@ -33,7 +33,7 @@ import type { Mover } from "./move";
 import { rectOfId } from "./web-dom";
 
 type Page = "move" | "rename" | "merge" | "split";
-type FolderPage = "new" | "rename" | "delete";
+type FolderPage = "new" | "rename";
 
 const PAGE_LABELS: Record<Page, string> = {
   move: "Move to folder",
@@ -44,7 +44,6 @@ const PAGE_LABELS: Record<Page, string> = {
 const FOLDER_PAGE_LABELS: Record<FolderPage, string> = {
   new: "New folder",
   rename: "Rename folder",
-  delete: "Delete folder",
 };
 
 /** Where the pointer was, in window coordinates. */
@@ -599,8 +598,9 @@ export function RowMenu(props: {
 
 /**
  * Right-click (or More) menu for a folder in the sidebar: make a workspace in it,
- * rename it, add a folder below it, or delete it. Unsorted can be renamed but not
- * deleted. Without a folder, as from the Folders header, it adds a folder at the end.
+ * rename it, add a folder below it, or delete it at once, which sends its workspaces
+ * to Unsorted. Unsorted can be renamed but not deleted. Without a folder, as from
+ * the Folders header, it adds a folder at the end.
  */
 export function FolderMenu(props: {
   folder: Folder | null;
@@ -645,16 +645,8 @@ export function FolderMenu(props: {
     <MenuItem key={key} theme={theme} icon={icon} label={label} onPress={onPress} danger={danger} />
   );
   const chevron = <Icon name="ChevronRight" size={14} color={theme.colors.foregroundMuted} />;
-  const opener = (key: FolderPage, icon: string, label: string, prepare?: () => void, danger?: boolean) => (
-    <MenuItem
-      key={key}
-      theme={theme}
-      icon={icon}
-      label={label}
-      trailing={chevron}
-      danger={danger}
-      {...sub.opener(key, prepare)}
-    />
+  const opener = (key: FolderPage, icon: string, label: string, prepare?: () => void) => (
+    <MenuItem key={key} theme={theme} icon={icon} label={label} trailing={chevron} {...sub.opener(key, prepare)} />
   );
 
   const newFolder = (
@@ -673,34 +665,29 @@ export function FolderMenu(props: {
 
   function page(key: FolderPage, f: Folder): ReactNode {
     if (key === "new") return newFolder;
-    if (key === "rename") {
-      const rename = () => {
-        const name = freeName(f.id);
-        if (name) void save((d) => renameFolder(d, f.id, name), "Could not rename. Try again.");
-      };
-      return (
-        <>
-          <MenuField theme={theme} value={draft} onChangeText={type} label="Folder name" selectAll onSubmit={rename} />
-          {item("save", "Check", "Save", rename)}
-        </>
-      );
-    }
-    const question = `Delete “${f.name}”?`;
-    const goes = props.count === 1 ? "workspace goes" : `${props.count} workspaces go`;
+    const rename = () => {
+      const name = freeName(f.id);
+      if (name) void save((d) => renameFolder(d, f.id, name), "Could not rename. Try again.");
+    };
     return (
       <>
-        <MenuNote theme={theme}>
-          {props.count === 0 ? question : `${question} Its ${goes} back to ${folderName(folders.doc, UNSORTED_ID)}.`}
-        </MenuNote>
-        {item(
-          "delete",
-          "Trash2",
-          "Delete folder",
-          () => void save((d) => deleteFolder(d, f.id), "Could not delete. Try again."),
-          true,
-        )}
+        <MenuField theme={theme} value={draft} onChangeText={type} label="Folder name" selectAll onSubmit={rename} />
+        {item("save", "Check", "Save", rename)}
       </>
     );
+  }
+
+  async function remove(f: Folder) {
+    const unsorted = folderName(folders.doc, UNSORTED_ID);
+    if (!(await folders.update((d) => deleteFolder(d, f.id)))) {
+      toast.error("Could not delete. Try again.");
+      return;
+    }
+    onClose();
+    const went = props.count === 1 ? "Its workspace went" : `Its ${props.count} workspaces went`;
+    toast.show(props.count === 0 ? `Deleted “${f.name}”` : `Deleted “${f.name}”. ${went} to ${unsorted}.`, {
+      variant: "success",
+    });
   }
 
   const newWorkspace = props.onNewWorkspace;
@@ -723,7 +710,14 @@ export function FolderMenu(props: {
       {folder.id === UNSORTED_ID ? null : (
         <>
           <MenuSeparator theme={theme} />
-          {opener("delete", "Trash2", "Delete folder", undefined, true)}
+          <MenuItem
+            theme={theme}
+            icon="Trash2"
+            label="Delete folder"
+            danger
+            onPress={() => void remove(folder)}
+            onHoverIn={sub.onHoverOther}
+          />
         </>
       )}
     </>
