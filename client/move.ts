@@ -15,7 +15,7 @@ import {
   UNSORTED_ID,
   workspaceFolderOf,
 } from "../shared/model";
-import { debugLog, type FoldersState, listWorkspaceMeta, type WorkspaceMeta } from "./data";
+import { type FoldersState, listWorkspaceMeta, type WorkspaceMeta } from "./data";
 
 /** A question to answer before a move goes ahead; `MoveConfirm` shows it. */
 export interface MoveQuestion {
@@ -204,7 +204,6 @@ export function useMover(options: {
               `${chosen.length === 1 ? "It carries" : "They carry"} on in ${toName}: commands and file changes happen there from now on.`,
             action: "Move",
           });
-          debugLog("merge-asked", { ok });
           if (!ok) return false;
         }
 
@@ -234,7 +233,6 @@ export function useMover(options: {
           moved.push({ from: agent.id, to: out.agentId });
           if (out.note) notes.push(`${quoted(agent.title)}: ${out.note}`);
         }
-        debugLog("merge", { moved: moved.length, of: pending.length, failed: Boolean(failure), some: Boolean(agentIds) });
         if (moved.length > 0) latest.current.refresh();
         if (moved.length > 0) {
           const gone = new Set(moved.map(({ from }) => from));
@@ -280,7 +278,6 @@ export function useMover(options: {
         }
         const folder = workspaceFolderOf(doc, source);
         const out = await call({ agentId: agent.id, targetWorkspaceId: null, title: agent.title });
-        debugLog("split", { ok: out.ok, filed: folderId !== undefined });
         if (!out.ok) {
           toast.error(out.reason);
           return false;

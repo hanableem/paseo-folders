@@ -1,10 +1,8 @@
-import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { usePaseo, useRpc, useSettings } from "@getpaseo/plugin/client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   agentBucket,
   applyForcedToWorkspaces,
-  debugLogRpc,
   type FoldersDocument,
   foldersSettings,
   groupWorkspaces,
@@ -25,17 +23,6 @@ const AUTO_TITLE_MS = 24 * 60 * 60_000;
 const SWEEP_MS = 10 * 60_000;
 const PAGE_SIZE = 200;
 const MAX_PAGES = 50;
-
-let pluginClient: PluginClientContext | null = null;
-
-export function setPluginClient(client: PluginClientContext | null): void {
-  pluginClient = client;
-}
-
-/** Fire-and-forget interaction log for tuning; never includes titles or notes. */
-export function debugLog(event: string, data: Record<string, string | number | boolean | null> = {}): void {
-  void pluginClient?.rpc(debugLogRpc, { event, data }).catch(() => undefined);
-}
 
 export type PaseoApi = ReturnType<typeof usePaseo>;
 
@@ -217,7 +204,6 @@ export function useDirectory(): DirectoryState {
       .list({ subscribe: {}, filter: { includeArchived: true }, page: { limit: PAGE_SIZE }, signal: lifetime.signal })
       .then((result) => {
         if (stopped) return;
-        debugLog("dir-list", { entries: result.entries.length, more: result.pageInfo.hasMore, sub: Boolean(result.subscription) });
         // Seed from the first answer; the subscription only carries later changes and re-snapshots.
         map.clear();
         for (const { agent, project } of result.entries) put(agent, project.workspaceName ?? "");
@@ -226,7 +212,6 @@ export function useDirectory(): DirectoryState {
         setError(null);
         unsubscribe = result.subscription.subscribe({
           snapshot: ({ entries }) => {
-            debugLog("dir-snapshot", { entries: entries.length });
             map.clear();
             for (const { agent, project } of entries) put(agent, project.workspaceName ?? "");
             flush();
@@ -245,7 +230,6 @@ export function useDirectory(): DirectoryState {
       })
       .catch((e) => {
         if (stopped) return;
-        debugLog("dir-error", { message: String(e instanceof Error ? e.message : e).slice(0, 200) });
         setError(e instanceof Error ? e.message : String(e));
         setLoading(false);
       });
@@ -260,16 +244,12 @@ export function useDirectory(): DirectoryState {
         if (stopped) return;
         setWorkspaceMeta(full.workspaceMeta);
         const listed = new Set(full.agents.map((agent) => agent.id));
-        let dropped = 0;
-        for (const id of known) {
-          if (!listed.has(id) && map.delete(id)) dropped += 1;
-        }
-        if (dropped > 0) debugLog("dir-drop", { dropped });
+        for (const id of known) if (!listed.has(id)) map.delete(id);
         for (const agent of full.agents) if (!map.has(agent.id)) map.set(agent.id, agent);
         flush();
         setLoading(false);
-      } catch (e) {
-        if (!stopped) debugLog("dir-reconcile-error", { message: String(e instanceof Error ? e.message : e).slice(0, 200) });
+      } catch {
+        // The next pass, a minute later, tries again.
       }
     };
     void reconcile();
@@ -525,7 +505,6 @@ export function useArchiveAbandoned(folders: FoldersState, loaded: boolean, show
       try {
         const inUse = await workspacesInUse(api);
         const settled: string[] = [];
-        let archived = 0;
         for (const id of due) {
           if (id === latest.current.shownId) continue;
           // One with conversations has had its day to take a title, as in useAutoTitle.
@@ -533,14 +512,12 @@ export function useArchiveAbandoned(folders: FoldersState, loaded: boolean, show
             if (id === latest.current.shownId) continue;
             const result = await api.workspaces.archive(id);
             if (result.error) continue;
-            archived += 1;
           }
           settled.push(id);
         }
         if (settled.length > 0) await state.update((doc) => withoutAutoTitle(doc, settled));
-        debugLog("archive-abandoned", { due: due.length, archived, settled: settled.length });
-      } catch (e) {
-        debugLog("archive-abandoned-error", { message: String(e instanceof Error ? e.message : e).slice(0, 200) });
+      } catch {
+        // The next sweep tries again.
       } finally {
         busy.current = false;
       }

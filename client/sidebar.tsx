@@ -41,7 +41,7 @@ import {
   withoutAutoTitle,
   workspaceFolderOf,
 } from "../shared/model";
-import { debugLog, useArchiveAbandoned, useAutoImport, useAutoTitle, useDirectory, useFolders } from "./data";
+import { useArchiveAbandoned, useAutoImport, useAutoTitle, useDirectory, useFolders } from "./data";
 import { FolderMenu, type MenuPoint, RowMenu, tint } from "./menu";
 import { useMover } from "./move";
 import { BucketIndicator, mostUrgent, ProviderMark, WorkspaceIcon } from "./status";
@@ -243,7 +243,6 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
   async function moveTo(ws: ListedWorkspace, folderId: string, folderName: string) {
     if (!ready || workspaceFolderOf(ready.doc, ws) === folderId) return;
     const ok = await ready.update((d) => moveWorkspace(d, ws.id, folderId));
-    debugLog("drop", { ok, unsorted: folderId === UNSORTED_ID });
     if (!ok) toast.error("Could not move. Try again.");
     else toast.show(`Moved to ${folderName}`, { variant: "success" });
   }
@@ -256,7 +255,6 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
 
   const openMenu = (ws: ListedWorkspace, at: MenuPoint) => {
     setMenu({ kind: "workspace", ws, at });
-    debugLog("menu", { platform: Platform.OS, x: Math.round(at.x), y: Math.round(at.y) });
   };
 
   /** Where folder `folderId`, held with the pointer at window height `y`, would land among the folders shown. */
@@ -313,7 +311,6 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
       container.current?.measureInWindow((left, _top, width) => {
         setDrag((d) => (d && d.subject === subject ? { ...d, bounds: { left, width } } : d));
       });
-      debugLog("drag-start", { platform: Platform.OS, kind: subject.kind, x: Math.round(x), y: Math.round(y) });
     },
     move(x, y) {
       ghost.current?.({ x, y });
@@ -335,13 +332,11 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
       setReorder(null);
       if (subject?.kind === "folder") {
         const index = y === null ? null : reorderAt(subject.folder.id, y);
-        debugLog("folder-drop", { index });
         if (index !== null) placeFolder(subject.folder.id, index);
         return;
       }
       const target = x === null || y === null ? null : hitTest(x, y);
       const action = subject && ready ? dropAction(ready.doc, subject, target) : null;
-      debugLog("drag-end", { kind: subject?.kind ?? null, hit: target?.kind ?? null, action: action?.kind ?? null });
       if (subject && action) perform(subject, action);
     },
   };

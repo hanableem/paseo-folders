@@ -1,6 +1,5 @@
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import {
-  debugLogRpc,
   FoldersDocumentSchema,
   foldersSettings,
   moveConversationRpc,
@@ -19,9 +18,5 @@ export default function contribute(server: PluginServerContext) {
     return state.status === "ready" ? state.values : FoldersDocumentSchema.parse({});
   });
   server.handle(moveConversationRpc, (input, { paseo }) => moveConversation(input, paseo));
-  server.handle(debugLogRpc, ({ event, data }) => {
-    console.log(`[folders-debug] ${event} ${JSON.stringify(data)}`);
-    return { ok: true };
-  });
   return () => {};
 }
