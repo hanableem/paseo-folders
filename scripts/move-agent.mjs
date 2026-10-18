@@ -8,8 +8,8 @@
 // new workspace. The provider session is not touched: Claude Code resumes a session by id from
 // any directory and keeps writing to the transcript where the session started, so the history
 // stays. The agent gets a new Paseo id; its title, labels, mode, model and thinking option are
-// carried over. When nothing else is left in the old workspace, it is archived and the new one
-// takes its title and pin.
+// carried over, and so are its folder, hand placement and note in Folders. When nothing else is
+// left in the old workspace, it is archived and the new one takes its title and pin.
 //
 // Before deleting anything, the script saves the agent as Paseo returned it under
 // <Paseo home>/paseo-folders/moves/. If the import fails, it imports the session back into the
@@ -50,6 +50,26 @@ async function restoreSettings(client, newId, agent) {
   if (agent.thinkingOptionId) {
     await client.setAgentThinkingOption(newId, agent.thinkingOptionId).catch(warn("restore the thinking option"));
   }
+}
+
+// Carries the conversation's folder, hand placement and note in Folders over to the new agent id,
+// as the plugin does after its own moves. Tries again when an app saved the folders in between.
+async function carryFolders(client, from, to) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const read = await client.invokePluginRpc("paseo-folders", "settings.folders.read", {});
+    if (read?.status !== "ready") throw new Error("the saved folders are invalid");
+    const keys = ["assignments", "manual", "notes"].filter((key) => read.values[key] && from in read.values[key]);
+    if (keys.length === 0) return;
+    const values = { ...read.values };
+    for (const key of keys) {
+      values[key] = { ...values[key], [to]: values[key][from] };
+      delete values[key][from];
+    }
+    const written = await client.invokePluginRpc("paseo-folders", "settings.folders.write", { revision: read.revision, values });
+    if (written?.status === "saved") return;
+    if (written?.status !== "conflict") throw new Error(written?.error ?? "the folders were not saved");
+  }
+  throw new Error("the folders kept changing while saving");
 }
 
 async function main(client) {
@@ -106,6 +126,7 @@ async function main(client) {
 
   if (moved.workspaceId !== workspaceId) console.error(`warning: the agent landed in workspace ${moved.workspaceId}`);
   await restoreSettings(client, moved.id, agent);
+  await carryFolders(client, id, moved.id).catch(warn("carry its folder over in Folders"));
   if (alone) {
     if (fromWorkspace?.pinnedAt) await client.setWorkspacePinned(workspaceId, true).catch(warn("pin the new workspace"));
     await client.archiveWorkspace(fromWorkspaceId).catch(warn("archive the old workspace"));

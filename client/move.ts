@@ -106,7 +106,8 @@ export function useMover(options: {
   const call = useCallback(
     async (input: { agentId: string; targetWorkspaceId: string | null; title?: string }) => {
       try {
-        return await move(input);
+        // The folder changes go into the same save as the rest of the move (see `save`).
+        return await move({ ...input, carryFolders: false });
       } catch (error) {
         return { ok: false as const, reason: `Paseo did not answer (${error instanceof Error ? error.message : String(error)}).` };
       }

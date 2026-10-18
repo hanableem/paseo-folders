@@ -5,6 +5,7 @@ import type { RpcInput, RpcOutput } from "@getpaseo/plugin";
 import type { PaseoApi } from "@getpaseo/client";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { moveConversationRpc } from "../shared/model";
+import { carryFolderEntries } from "./carry";
 
 // Paseo's plugin API cannot import a provider session into a workspace or delete an
 // agent, so moves go through Paseo's internal daemon client, as scripts/move-agent.mjs
@@ -122,6 +123,13 @@ async function move(client: DaemonClient, paseo: PaseoApi, input: Input): Promis
   } catch (error) {
     if (created) await paseo.workspaces.archive(workspaceId).catch(() => undefined);
     throw error;
+  }
+
+  if (movedId !== id && input.carryFolders !== false) {
+    await carryFolderEntries(client, id, movedId).catch((error) => {
+      console.error(`[folders] could not carry ${id}'s folder over to ${movedId}: ${String(error)}`);
+      note = [note, "Its folder could not be carried over."].filter(Boolean).join(" ");
+    });
   }
 
   const left = (await client.fetchAgents({})).entries.some(({ agent: other }) => other.workspaceId === sourceWorkspaceId);

@@ -105,6 +105,12 @@ export const moveConversationRpc = defineRpc({
     targetWorkspaceId: z.string().min(1).nullable(),
     /** Title for a new workspace. */
     title: z.string().max(200).optional(),
+    /**
+     * Whether the host carries the conversation's folder, hand placement and note over
+     * to its new agent ID. The Folders screens pass false, as they save that together
+     * with the rest of the move; other callers leave it out.
+     */
+    carryFolders: z.boolean().optional(),
   }),
   output: z.union([
     z.object({
@@ -357,7 +363,7 @@ export function moveAgent(doc: FoldersDocument, agentId: string, folderId: strin
 
 /** Carries a conversation's folder, hand placement and note over to the agent ID it got when it moved. */
 export function renameAgent(doc: FoldersDocument, from: string, to: string): FoldersDocument {
-  if (from === to) return doc;
+  if (from === to || !(from in doc.assignments || from in doc.manual || from in doc.notes)) return doc;
   const carry = <T>(record: Record<string, T>): Record<string, T> => {
     if (!(from in record)) return record;
     const next = { ...record, [to]: record[from] };

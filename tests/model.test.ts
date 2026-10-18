@@ -329,6 +329,7 @@ test("a moved conversation keeps its folder, hand placement and note under its n
   assert.deepEqual(moved.manual, { n1: true });
   assert.deepEqual(moved.notes, { n1: "blood tests" });
   assert.equal(renameAgent(doc, "a1", "a1"), doc, "an unchanged ID changes nothing");
+  assert.equal(renameAgent(moved, "a1", "n2"), moved, "an ID with nothing filed under it changes nothing");
 });
 
 test("a workspace that gains or loses conversations stays in the folder it showed in", () => {
