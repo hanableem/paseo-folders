@@ -132,6 +132,16 @@ export const moveConversationRpc = defineRpc({
   ]),
 });
 
+/**
+ * Pins a workspace in Paseo, or unpins it, as Paseo's own Pin to top does. Recent lists pinned
+ * workspaces first. Paseo's plugin API cannot pin, so the host does it.
+ */
+export const pinWorkspaceRpc = defineRpc({
+  name: "workspace.pin",
+  input: z.object({ workspaceId: z.string().min(1), pinned: z.boolean() }),
+  output: z.union([z.object({ ok: z.literal(true) }), z.object({ ok: z.literal(false), reason: z.string() })]),
+});
+
 export interface ListedAgent {
   id: string;
   title: string;
@@ -217,6 +227,33 @@ export function groupWorkspaces(
     out.push({ id, title, agents: list, activityAt: list[0].activityAt });
   }
   return out.sort(byRecentActivity);
+}
+
+/** How many workspaces Recent lists before the least recently used drop off. */
+export const RECENT_LIMIT = 8;
+
+/**
+ * The workspaces under Recent: those pinned in Paseo first, the latest pin on top as in
+ * Paseo's own Pinned group, then the others, last used first. Pinned workspaces and those
+ * with something to see (a reply not yet read, a question, an error or work in progress)
+ * always stay; the rest fill the list up to `limit`.
+ */
+export function recentWorkspaces<T extends ListedWorkspace>(
+  workspaces: readonly T[],
+  pinnedAt: (workspaceId: string) => string,
+  limit = RECENT_LIMIT,
+): T[] {
+  const pinned = workspaces.filter((ws) => pinnedAt(ws.id)).sort((a, b) => pinnedAt(b.id).localeCompare(pinnedAt(a.id)));
+  const rest = workspaces.filter((ws) => !pinnedAt(ws.id)).sort(byRecentActivity);
+  const kept = new Set(rest.filter((ws) => workspaceBucket(ws) !== "done").map((ws) => ws.id));
+  let room = limit - pinned.length - kept.size;
+  for (const ws of rest) {
+    if (room <= 0) break;
+    if (kept.has(ws.id)) continue;
+    kept.add(ws.id);
+    room -= 1;
+  }
+  return [...pinned, ...rest.filter((ws) => kept.has(ws.id))];
 }
 
 /** What decides a workspace's folder: its own placement, its title and its conversations. */

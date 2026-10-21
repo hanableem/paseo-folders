@@ -1,11 +1,11 @@
-import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { RpcInput, RpcOutput } from "@getpaseo/plugin";
 import type { PaseoApi } from "@getpaseo/client";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { moveConversationRpc } from "../shared/model";
 import { carryFolderEntries } from "./carry";
+import { daemonUrl, paseoHome } from "./daemon";
 
 // Paseo's plugin API cannot import a provider session into a workspace or delete an
 // agent, so moves go through Paseo's internal daemon client, as scripts/move-agent.mjs
@@ -17,21 +17,6 @@ import { carryFolderEntries } from "./carry";
 type Input = RpcInput<typeof moveConversationRpc>;
 type Output = RpcOutput<typeof moveConversationRpc>;
 type Agent = NonNullable<Awaited<ReturnType<DaemonClient["fetchAgent"]>>>["agent"];
-
-const paseoHome = () => process.env.PASEO_HOME || join(homedir(), ".paseo");
-
-/** PASEO_WS_URL, else the listen address in Paseo's config, else Paseo's default. */
-function daemonUrl(): string {
-  if (process.env.PASEO_WS_URL) return process.env.PASEO_WS_URL;
-  try {
-    const config = JSON.parse(readFileSync(join(paseoHome(), "config.json"), "utf8"));
-    const listen = config?.daemon?.listen;
-    if (typeof listen === "string" && /^[\w.-]+:\d+$/.test(listen)) return `ws://${listen}/ws`;
-  } catch {
-    // No readable config: Paseo itself then listens on its default address.
-  }
-  return "ws://127.0.0.1:6767/ws";
-}
 
 function samePath(a: string, b: string): boolean {
   const real = (p: string) => {

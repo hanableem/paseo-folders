@@ -3,10 +3,12 @@ import {
   FoldersDocumentSchema,
   foldersSettings,
   moveConversationRpc,
+  pinWorkspaceRpc,
   readFoldersRpc,
   readSuggestionsRpc,
 } from "./shared/model";
 import { moveConversation } from "./server/move";
+import { pinWorkspace } from "./server/pin";
 import { readSuggestions } from "./server/suggestions";
 
 export default function contribute(server: PluginServerContext) {
@@ -18,5 +20,6 @@ export default function contribute(server: PluginServerContext) {
     return state.status === "ready" ? state.values : FoldersDocumentSchema.parse({});
   });
   server.handle(moveConversationRpc, (input, { paseo }) => moveConversation(input, paseo));
+  server.handle(pinWorkspaceRpc, pinWorkspace);
   return () => {};
 }

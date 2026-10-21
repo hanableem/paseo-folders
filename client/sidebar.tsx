@@ -39,6 +39,7 @@ import {
   parseRoute,
   placementAt,
   placeWorkspace,
+  recentWorkspaces,
   reorderTarget,
   rowEdge,
   sameDirectory,
@@ -90,6 +91,8 @@ const AT_END = "";
  * Moves into another project ask first. Right-click or long-press a workspace
  * for the menu, which does the same. Folders are dragged into order with the
  * mouse, and right-clicked (or More on touch screens) to add, rename or delete.
+ * Recent, above the folders, lists the workspaces pinned in Paseo and the ones used
+ * last, so the few in hand are one press away; the menu pins and unpins.
  */
 export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginSidebarItemProps) {
   const toast = useToast();
@@ -99,6 +102,7 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
   const { height: windowHeight } = useWindowDimensions();
   const closeMenu = useCallback(() => setMenu(null), []);
   const [expanded, setExpanded] = useState(true);
+  const [recentOpen, setRecentOpen] = useState(true);
   const [openFolder, setOpenFolder] = useState<string | null>(null);
   const [showAll, setShowAll] = useState<ReadonlySet<string>>(new Set());
   /** Workspaces opened to list their conversations. */
@@ -133,8 +137,9 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
   const shownFolders = useRef<string[]>([]);
   /** How far below the top of a dragged folder's row the pointer took hold of it. */
   const grabOffset = useRef(0);
-  /** The folders as they were when the drag began, so rows hold still under the pointer. */
+  /** The folders and Recent as they were when the drag began, so rows hold still under the pointer. */
   const frozen = useRef<Map<string, ListedWorkspace[]> | null>(null);
+  const frozenRecent = useRef<ListedWorkspace[] | null>(null);
   const ghost = useRef<((at: MenuPoint) => void) | null>(null);
   const ready = folders.status === "ready" ? folders : null;
   const orderKey = ready ? folderOrder(ready.doc).map((f) => f.id).join("\n") : "";
@@ -187,6 +192,11 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
     return map;
   }, [doc, workspaces]);
   const lists = (drag && frozen.current) || byFolder;
+  const recent = useMemo(
+    () => recentWorkspaces(workspaces, (id) => workspaceMeta.get(id)?.pinnedAt ?? ""),
+    [workspaces, workspaceMeta],
+  );
+  const recentShown = (drag && frozenRecent.current) || recent;
 
   const activeScreen = currentScreen?.screenId ?? null;
   const web = Platform.OS === "web";
@@ -359,6 +369,7 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
     start(subject, x, y) {
       dragging.current = subject;
       frozen.current = byFolder;
+      frozenRecent.current = recent;
       setMenu(null);
       setHover(null);
       setReorder(null);
@@ -386,6 +397,7 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
       const subject = dragging.current;
       dragging.current = null;
       frozen.current = null;
+      frozenRecent.current = null;
       setDrag(null);
       setHover(null);
       setReorder(null);
@@ -493,6 +505,33 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
       {header}
       {/* Paseo's sidebar header does not scroll, so the folders scroll on their own when tall. */}
       <ScrollView style={{ maxHeight: Math.max(240, windowHeight * 0.6) }}>
+      {recentShown.length > 0 ? (
+        <RecentItem
+          open={recentOpen}
+          // Like a folder: collapsed, it shows its most urgent status.
+          status={recentOpen ? "done" : mostUrgent(recentShown)}
+          theme={theme}
+          onToggle={() => setRecentOpen((v) => !v)}
+        />
+      ) : null}
+      {recentOpen
+        ? recentShown.map((ws) => (
+            <WorkspaceItem
+              key={`recent-${ws.id}`}
+              ws={ws}
+              theme={theme}
+              active={showing.id === ws.id}
+              lifted={drag?.subject.kind === "workspace" && drag.subject.ws.id === ws.id}
+              dropTarget={false}
+              listing={false}
+              recent
+              pinned={Boolean(workspaceMeta.get(ws.id)?.pinnedAt)}
+              dragRef={dragRef}
+              onOpen={() => openWorkspace(ws)}
+              onMenu={(at) => openMenu(ws, at)}
+            />
+          ))
+        : null}
       {groups.map((folder) => {
         const list = lists.get(folder.id) ?? [];
         const open = shownFolder === folder.id;
@@ -816,6 +855,33 @@ function InsertLine({ theme, end = false }: { theme: PluginTheme; end?: boolean 
   );
 }
 
+/** The Recent header: press it to show or hide the workspaces under it. */
+function RecentItem(props: { open: boolean; status: StatusBucket; theme: PluginTheme; onToggle(): void }) {
+  const { theme } = props;
+  return (
+    <SidebarRow
+      id="recent"
+      icon="Clock"
+      label="Recent"
+      active={false}
+      onPress={props.onToggle}
+      trailing={
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+          <BucketIndicator bucket={props.status} theme={theme} />
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={props.open ? "Collapse Recent" : "Expand Recent"}
+            onPress={props.onToggle}
+            hitSlop={8}
+          >
+            <Icon name={props.open ? "ChevronDown" : "ChevronRight"} size={14} color={theme.colors.foregroundMuted} />
+          </Pressable>
+        </View>
+      }
+    />
+  );
+}
+
 /**
  * A folder row: press it to list its workspaces, drag it with the mouse to put it
  * in order, right-click it or press More for its menu. Like Paseo's project rows,
@@ -919,7 +985,11 @@ function FolderItem(props: {
   );
 }
 
-/** A workspace row with Paseo-style status, its title, and how many conversations it holds. */
+/**
+ * A workspace row with Paseo-style status, its title, and how many conversations it holds.
+ * Under Recent it leaves out the count, is no drop target (its folder's row is) and shows
+ * a pin when pinned.
+ */
 function WorkspaceItem(props: {
   ws: ListedWorkspace;
   theme: PluginTheme;
@@ -929,9 +999,13 @@ function WorkspaceItem(props: {
   dropTarget: boolean;
   /** Its conversations are listed below it. */
   listing: boolean;
+  /** Listed under Recent. */
+  recent?: boolean;
+  pinned?: boolean;
   dragRef: { current: DragApi };
   onOpen(): void;
-  onToggle(): void;
+  /** Lists or hides its conversations; left out under Recent. */
+  onToggle?(): void;
   onMenu(at: MenuPoint): void;
 }) {
   const { ws, theme } = props;
@@ -961,8 +1035,13 @@ function WorkspaceItem(props: {
   } as object;
   const web = Platform.OS === "web";
   const count = ws.agents.length;
+  const muted = theme.colors.foregroundMuted;
   return (
-    <View nativeID={dropNodeId({ kind: "workspace", id: ws.id })} {...panHandlers} collapsable={false}>
+    <View
+      nativeID={props.recent ? `paseo-folders-recent:${encodeURIComponent(ws.id)}` : dropNodeId({ kind: "workspace", id: ws.id })}
+      {...panHandlers}
+      collapsable={false}
+    >
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={ws.title}
@@ -984,7 +1063,8 @@ function WorkspaceItem(props: {
         <Text numberOfLines={1} style={{ flex: 1, color: theme.colors.foreground, fontSize: 13 }}>
           {ws.title}
         </Text>
-        {count > 1 ? (
+        {props.pinned ? <Icon name="Pin" size={12} color={muted} /> : null}
+        {count > 1 && props.onToggle ? (
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={props.listing ? `Hide the conversations in ${ws.title}` : `Show the ${count} conversations in ${ws.title}`}

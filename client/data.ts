@@ -36,6 +36,8 @@ export interface WorkspaceMeta {
   projectId: string;
   /** The project's name as Paseo shows it; empty when unknown. */
   projectName: string;
+  /** When the workspace was pinned in Paseo; empty while it is not. */
+  pinnedAt: string;
 }
 
 export interface Directory {
@@ -116,6 +118,7 @@ type WorkspacePayload = {
   projectId?: string | null;
   projectCustomName?: string | null;
   projectDisplayName?: string | null;
+  pinnedAt?: string | null;
 };
 
 function workspaceMetaOf(ws: WorkspacePayload): WorkspaceMeta {
@@ -126,6 +129,7 @@ function workspaceMetaOf(ws: WorkspacePayload): WorkspaceMeta {
     projectRoot: ws.projectRootPath ?? ws.workspaceDirectory ?? "",
     projectId: ws.projectId ?? "",
     projectName: ws.projectCustomName?.trim() || ws.projectDisplayName?.trim() || "",
+    pinnedAt: ws.pinnedAt ?? "",
   };
 }
 

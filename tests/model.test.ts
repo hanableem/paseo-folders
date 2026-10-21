@@ -31,6 +31,7 @@ import {
   placeNames,
   placementAt,
   placeWorkspace,
+  recentWorkspaces,
   reorderTarget,
   rowEdge,
   renameAgent,
@@ -494,4 +495,30 @@ test("dropping a workspace between rows places it; dropping where it is does not
   assert.equal(placementAt(doc, lists, ws("w1"), folder(r), null), null, "already at the top");
   assert.equal(placementAt(doc, lists, ws("w1"), folder(c), null), undefined, "another folder files it");
   assert.deepEqual(placementAt(doc, lists, ws("w1"), row("c1"), "above"), { kind: "place", folderId: c, before: "c1" });
+});
+
+test("Recent lists pinned workspaces first, latest pin on top, then the last used up to the limit", () => {
+  const day = (d: number) => `2026-01-${String(d).padStart(2, "0")}T00:00:00Z`;
+  const listed = groupWorkspaces(
+    [1, 2, 3, 4, 5, 6].map((d) => agent(`a${d}`, `w${d}`, day(d))),
+    new Map(),
+  );
+  const pins: Record<string, string> = { w1: day(20), w2: day(21) };
+  const ids = (limit: number) => recentWorkspaces(listed, (id) => pins[id] ?? "", limit).map((ws) => ws.id);
+  assert.deepEqual(ids(4), ["w2", "w1", "w6", "w5"]);
+  assert.deepEqual(ids(8), ["w2", "w1", "w6", "w5", "w4", "w3"]);
+  // Pinned workspaces stay even past the limit.
+  assert.deepEqual(ids(1), ["w2", "w1"]);
+});
+
+test("Recent keeps a workspace with something to see however long ago it was used", () => {
+  const day = (d: number) => `2026-01-${String(d).padStart(2, "0")}T00:00:00Z`;
+  const unread = { ...agent("a1", "w1", day(1)), bucket: "attention" as const };
+  const asking = { ...agent("a2", "w2", day(2)), bucket: "needs_input" as const };
+  const listed = groupWorkspaces([unread, asking, agent("a3", "w3", day(3)), agent("a4", "w4", day(4))], new Map());
+  const ids = (limit: number) => recentWorkspaces(listed, () => "", limit).map((ws) => ws.id);
+  // In order of use, with the newest of the rest filling what room is left.
+  assert.deepEqual(ids(3), ["w4", "w2", "w1"]);
+  assert.deepEqual(ids(2), ["w2", "w1"]);
+  assert.deepEqual(ids(8), ["w4", "w3", "w2", "w1"]);
 });

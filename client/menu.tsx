@@ -1,5 +1,5 @@
 import type { PluginTheme } from "@getpaseo/plugin";
-import { usePaseo } from "@getpaseo/plugin/client";
+import { usePaseo, useRpc } from "@getpaseo/plugin/client";
 import { copyText, Icon, useToast } from "@getpaseo/plugin/client/react-native";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import {
@@ -23,6 +23,7 @@ import {
   type ListedWorkspace,
   mergeTargets,
   moveWorkspace,
+  pinWorkspaceRpc,
   renameFolder,
   resumeCommand,
   UNSORTED_ID,
@@ -400,7 +401,7 @@ function MenuField(props: {
 
 /**
  * Right-click (or long-press) menu for a workspace row. It follows Paseo's own
- * workspace menu (copy path and branch, rename, archive), puts Move to folder
+ * workspace menu (copy path and branch, rename, pin, archive), puts Move to folder
  * where Paseo has Labels, and adds the tab menu's copy commands for a workspace
  * holding a single conversation, grouped as in the tab menu. With a mover it also
  * merges the workspace into another one and splits a conversation off into a
@@ -421,6 +422,7 @@ export function RowMenu(props: {
 }) {
   const { ws, meta, theme, folders, mover, onClose } = props;
   const paseo = usePaseo();
+  const pin = useRpc(pinWorkspaceRpc);
   const toast = useToast();
   const sub = useSubmenu<Page>();
   const [draft, setDraft] = useState(ws.title);
@@ -428,6 +430,7 @@ export function RowMenu(props: {
   const single = ws.agents.length === 1 ? ws.agents[0] : null;
   const resume = single ? resumeCommand(single.provider, single.sessionId) : null;
   const current = workspaceFolderOf(folders.doc, ws);
+  const pinned = Boolean(meta?.pinnedAt);
 
   async function act(work: () => Promise<unknown>, done: string, failed: string) {
     try {
@@ -551,6 +554,17 @@ export function RowMenu(props: {
           )
         : null}
       {opener("rename", "Pencil", "Rename workspace", () => setDraft(ws.title))}
+      {/* Paseo's own pin, which Recent lists first; Paseo's menu puts it after Rename too. */}
+      {action("pin", pinned ? "PinOff" : "Pin", pinned ? "Unpin from Recent" : "Pin to Recent", () =>
+        void act(
+          async () => {
+            const result = await pin({ workspaceId: ws.id, pinned: !pinned });
+            if (!result.ok) throw new Error(result.reason);
+          },
+          pinned ? "Unpinned" : "Pinned to Recent",
+          pinned ? "Could not unpin." : "Could not pin.",
+        ),
+      )}
       <MenuSeparator theme={theme} />
       {opener("move", "FolderInput", "Move to folder")}
       {mover && ws.agents.length > 0 && (props.workspaces?.length ?? 0) > 1
