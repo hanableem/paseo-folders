@@ -20,10 +20,13 @@ import {
   type DropAction,
   dropAction,
   dropNodeId,
+  dropNodePart,
   type DropTarget,
   type Folder,
+  type FoldersDocument,
   folderName,
   folderOrder,
+  inFolderOrder,
   isDropNodeId,
   type ListedAgent,
   type ListedWorkspace,
@@ -34,7 +37,10 @@ import {
   moveWorkspace,
   parseDropNodeId,
   parseRoute,
+  placementAt,
+  placeWorkspace,
   reorderTarget,
+  rowEdge,
   sameDirectory,
   type StatusBucket,
   UNSORTED_ID,
@@ -62,6 +68,10 @@ const layer = (Platform.OS === "web" ? "fixed" : "absolute") as "absolute";
 
 const sameTarget = (a: DropTarget | null, b: DropTarget | null) => a?.kind === b?.kind && a?.id === b?.id;
 
+/** The row under a dragged workspace or conversation, and whether the pointer is at its top or bottom edge. */
+type Hover = { target: DropTarget; edge: "above" | "below" | null };
+const sameHover = (a: Hover | null, b: Hover | null) => sameTarget(a?.target ?? null, b?.target ?? null) && a?.edge === b?.edge;
+
 /** What a sidebar row drags: a workspace or conversation to file or merge, or a folder to put in order. */
 type Dragged = DragSubject | { kind: "folder"; folder: Folder };
 
@@ -71,8 +81,10 @@ const AT_END = "";
 /**
  * Folders of workspaces, like Paseo's own list but grouped. One folder is open
  * at a time so every folder stays on screen as a drop target. With a mouse:
- * drag a workspace onto a folder to file it there, or onto another workspace to
- * move its conversations in as tabs. A workspace with several conversations
+ * drag a workspace onto a folder to file it there, onto the top or bottom edge of
+ * another workspace to put it there (the folder then keeps that order, with new
+ * workspaces on top), or onto the middle of another workspace to move its
+ * conversations in as tabs. A workspace with several conversations
  * opens into one row per conversation; drag one onto another workspace to move
  * it there, or onto a folder to give it a workspace of its own in that folder.
  * Moves into another project ask first. Right-click or long-press a workspace
@@ -97,11 +109,13 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
     /** The sidebar's horizontal extent in window coordinates; Paseo clips anything past it. */
     bounds: { left: number; width: number } | null;
   } | null>(null);
-  const [hover, setHover] = useState<DropTarget | null>(null);
+  const [hover, setHover] = useState<Hover | null>(null);
   /** Where a dragged folder would land among the folders shown. */
   const [reorder, setReorder] = useState<number | null>(null);
   /** A folder just dropped in a new place, shown there until the saved order arrives. */
   const [placed, setPlaced] = useState<{ id: string; index: number } | null>(null);
+  /** The folders as a workspace just dropped between rows left them, shown until they are saved. */
+  const [placedDoc, setPlacedDoc] = useState<FoldersDocument | null>(null);
   const [headerHovered, setHeaderHovered] = useState(false);
   const [menu, setMenu] = useState<
     | { kind: "workspace"; ws: ListedWorkspace; at: MenuPoint }
@@ -125,6 +139,10 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
   const ready = folders.status === "ready" ? folders : null;
   const orderKey = ready ? folderOrder(ready.doc).map((f) => f.id).join("\n") : "";
   useEffect(() => setPlaced(null), [orderKey]);
+  const placeKey = ready ? JSON.stringify([ready.doc.workspaceOrder, ready.doc.workspaceAssignments]) : "";
+  useEffect(() => setPlacedDoc(null), [placeKey]);
+  /** The folders as shown: as saved, or as a drop just left them. */
+  const doc = placedDoc ?? ready?.doc ?? null;
 
   // A workspace made from a folder has no conversation yet, so Paseo lists no agent
   // for it. Show it until its first conversation arrives or it is archived: on every
@@ -158,15 +176,16 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
 
   const byFolder = useMemo(() => {
     const map = new Map<string, ListedWorkspace[]>();
-    if (!ready) return map;
+    if (!doc) return map;
     for (const ws of workspaces) {
-      const id = workspaceFolderOf(ready.doc, ws);
+      const id = workspaceFolderOf(doc, ws);
       const list = map.get(id) ?? [];
       list.push(ws);
       map.set(id, list);
     }
+    for (const [id, list] of map) map.set(id, inFolderOrder(doc, id, list));
     return map;
-  }, [ready, workspaces]);
+  }, [doc, workspaces]);
   const lists = (drag && frozen.current) || byFolder;
 
   const activeScreen = currentScreen?.screenId ?? null;
@@ -250,8 +269,46 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
   const nameOf = (folderId: string) => (ready ? folderName(ready.doc, folderId) : "");
   const titleOf = (workspaceId: string) => workspaces.find((w) => w.id === workspaceId)?.title ?? "";
 
-  /** The row under the pointer, read from the page, so it is right even if rows moved. */
-  const hitTest = (x: number, y: number): DropTarget | null => parseDropNodeId(idAtPoint(x, y, isDropNodeId));
+  /** The row under the pointer, read from the page so it is right even if rows moved, and the edge the pointer is at. */
+  const hoverAt = (x: number, y: number): Hover | null => {
+    const nodeId = idAtPoint(x, y, isDropNodeId);
+    const target = parseDropNodeId(nodeId);
+    if (!target || !nodeId) return null;
+    if (target.kind !== "workspace") return { target, edge: null };
+    const rect = rectOfId(nodeId);
+    const edge = rect ? rowEdge(rect, y) : null;
+    // A listed workspace's conversations follow its row, so between it and the next
+    // workspace is the bottom edge of its last conversation.
+    const ws = [...lists.values()].flat().find((w) => w.id === target.id);
+    const listing = Boolean(ws && ws.agents.length > 1 && opened.has(ws.id));
+    const part = dropNodePart(nodeId);
+    if (part === null) return { target, edge: listing && edge === "below" ? null : edge };
+    const last = ws?.agents[ws.agents.length - 1]?.id;
+    return { target, edge: edge === "below" && part === last ? "below" : null };
+  };
+
+  /** What dropping `subject` at `at` does: put a workspace between rows, or what `dropAction` says for the row. */
+  const actionFor = (subject: DragSubject, at: Hover | null): DropAction | null => {
+    if (!doc || !at) return null;
+    if (subject.kind === "workspace") {
+      const placement = placementAt(doc, lists, subject.ws, at.target, at.edge);
+      if (placement !== undefined) return placement;
+    }
+    return dropAction(doc, subject, at.target);
+  };
+
+  /** Puts a workspace among a folder's workspaces as the drop showed it, and shows it there until that is saved. */
+  function place(ws: ListedWorkspace, folderId: string, before: string | null) {
+    if (!ready || !doc) return;
+    const shown = (lists.get(folderId) ?? []).map((w) => w.id);
+    const change = (d: FoldersDocument) => placeWorkspace(d, ws.id, folderId, shown, before);
+    setPlacedDoc(change(doc));
+    void ready.update(change).then((ok) => {
+      if (ok) return;
+      setPlacedDoc(null);
+      toast.error("Could not reorder. Try again.");
+    });
+  }
 
   const openMenu = (ws: ListedWorkspace, at: MenuPoint) => {
     setMenu({ kind: "workspace", ws, at });
@@ -283,7 +340,9 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
   }
 
   function perform(subject: DragSubject, action: DropAction) {
-    if (action.kind === "file") {
+    if (action.kind === "place") {
+      if (subject.kind === "workspace") place(subject.ws, action.folderId, action.before);
+    } else if (action.kind === "file") {
       void moveTo(subject.ws, action.folderId, nameOf(action.folderId));
     } else if (action.kind === "split") {
       if (subject.kind !== "conversation") return;
@@ -320,8 +379,8 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
         setReorder((r) => (r === index ? r : index));
         return;
       }
-      const target = hitTest(x, y);
-      setHover((h) => (sameTarget(h, target) ? h : target));
+      const at = hoverAt(x, y);
+      setHover((h) => (sameHover(h, at) ? h : at));
     },
     end(x, y) {
       const subject = dragging.current;
@@ -335,8 +394,8 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
         if (index !== null) placeFolder(subject.folder.id, index);
         return;
       }
-      const target = x === null || y === null ? null : hitTest(x, y);
-      const action = subject && ready ? dropAction(ready.doc, subject, target) : null;
+      const at = x === null || y === null ? null : hoverAt(x, y);
+      const action = subject ? actionFor(subject, at) : null;
       if (subject && action) perform(subject, action);
     },
   };
@@ -403,13 +462,19 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
       ? null
       : ((reorder < heldAt ? groups[reorder] : groups[reorder + 1])?.id ?? AT_END);
 
-  // What the drop would do, shown on the target row and beside the pointer.
-  const action = filing ? dropAction(ready.doc, filing, hover) : null;
-  const dropOn = action ? hover : null;
+  // What the drop would do, shown on the target row, or as a line between rows, and beside the pointer.
+  const action = filing ? actionFor(filing, hover) : null;
+  const placing = action?.kind === "place" ? action : null;
+  const dropOn = action && !placing ? (hover?.target ?? null) : null;
   let hint = "";
   if (filing && action) {
     if (action.kind === "file") hint = `Move to ${nameOf(action.folderId)}`;
-    else if (action.kind === "split") hint = `New workspace in ${nameOf(action.folderId)}`;
+    else if (action.kind === "place") {
+      const first = (lists.get(action.folderId) ?? []).find((w) => w.id !== filing.ws.id)?.id;
+      if (action.before === null) hint = `Move to the bottom of ${nameOf(action.folderId)}`;
+      else if (action.before === first) hint = `Move to the top of ${nameOf(action.folderId)}`;
+      else hint = `Move above “${titleOf(action.before)}”`;
+    } else if (action.kind === "split") hint = `New workspace in ${nameOf(action.folderId)}`;
     else {
       const from = workspaceMeta.get(filing.ws.id)?.directory;
       const to = workspaceMeta.get(action.workspaceId)?.directory;
@@ -433,6 +498,7 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
         const open = shownFolder === folder.id;
         const all = showAll.has(folder.id);
         const shown = open ? (all ? list : list.slice(0, MAX_ROWS_PER_FOLDER)) : [];
+        const line = placing?.folderId === folder.id ? placing.before : undefined;
         const toggleAll = () =>
           setShowAll((prev) => {
             const next = new Set(prev);
@@ -465,6 +531,7 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
               const listing = ws.agents.length > 1 && opened.has(ws.id);
               return (
                 <Fragment key={ws.id}>
+                  {line === ws.id ? <InsertLine theme={theme} /> : null}
                   <WorkspaceItem
                     ws={ws}
                     theme={theme}
@@ -494,6 +561,8 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
                 </Fragment>
               );
             })}
+            {/* At the bottom, or above a row Show more hides. */}
+            {line !== undefined && !shown.some((ws) => ws.id === line) ? <InsertLine theme={theme} end /> : null}
             {open && list.length > MAX_ROWS_PER_FOLDER ? (
               <SidebarRow
                 id={`more-${folder.id}`}
@@ -505,7 +574,7 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
           </Fragment>
         );
       })}
-      {lineAbove === AT_END ? <InsertLine theme={theme} /> : null}
+      {lineAbove === AT_END ? <InsertLine theme={theme} end /> : null}
       </ScrollView>
       {drag ? (
         <DragGhost
@@ -519,7 +588,13 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
                 : drag.subject.ws.title
           }
           hint={hint}
-          idle={drag.subject.kind === "folder" ? "Drag up or down to reorder" : "Drop on a folder or a workspace"}
+          idle={
+            drag.subject.kind === "folder"
+              ? "Drag up or down to reorder"
+              : drag.subject.kind === "workspace"
+                ? "Drop between workspaces to reorder, or on a folder or a workspace"
+                : "Drop on a folder or a workspace"
+          }
           theme={theme}
           follow={ghost}
         />
@@ -719,8 +794,11 @@ function DragGhost(props: {
   );
 }
 
-/** Where a dragged folder would land: a line between two rows, drawn over them so nothing moves. */
-function InsertLine({ theme }: { theme: PluginTheme }) {
+/**
+ * Where a dragged row would land: a line between two rows, drawn over them so nothing
+ * moves. At the end of a list it sits inside the last row, where the list does not clip it.
+ */
+function InsertLine({ theme, end = false }: { theme: PluginTheme; end?: boolean }) {
   return (
     <View pointerEvents="none" style={{ height: 0, zIndex: 1 }}>
       <View
@@ -728,7 +806,7 @@ function InsertLine({ theme }: { theme: PluginTheme }) {
           position: "absolute",
           left: 12,
           right: 12,
-          top: -1,
+          top: end ? -2 : -1,
           height: 2,
           borderRadius: 1,
           backgroundColor: theme.colors.accent,
@@ -890,7 +968,7 @@ function WorkspaceItem(props: {
         accessibilityLabel={ws.title}
         accessibilityHint={
           web
-            ? "Right-click for more. Drag onto a folder to file it, or onto another workspace to move its conversations there"
+            ? "Right-click for more. Drag between workspaces to reorder, onto a folder to file it, or onto another workspace to move its conversations there"
             : "Long press for more"
         }
         onPress={props.onOpen}

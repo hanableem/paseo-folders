@@ -21,6 +21,11 @@ export const FoldersDocumentSchema = z.object({
   /** Workspaces the user placed by hand. */
   workspaceManual: z.record(z.string(), z.boolean()).default({}),
   /**
+   * Folder ID -> workspace IDs in the order the user dragged them into. A folder
+   * without one lists its workspaces newest first.
+   */
+  workspaceOrder: z.record(z.string(), z.array(z.string())).default({}),
+  /**
    * Agent ID -> folder ID, usually from a suggestions file. A workspace without
    * its own placement goes where most of its conversations point.
    */
@@ -292,12 +297,66 @@ export function parseRoute(path: string): PaseoRoute | null {
   return m[1] === "plugin" ? { kind: "plugin", pluginId: id } : { kind: m[1] as "workspace" | "agent", id };
 }
 
+/** Files a workspace in a folder by hand. Another folder's order lets go of it, so it starts at the top if it comes back. */
 export function moveWorkspace(doc: FoldersDocument, workspaceId: string, folderId: string): FoldersDocument {
+  let workspaceOrder = doc.workspaceOrder;
+  for (const [id, ids] of Object.entries(doc.workspaceOrder)) {
+    if (id === folderId || !ids.includes(workspaceId)) continue;
+    if (workspaceOrder === doc.workspaceOrder) workspaceOrder = { ...doc.workspaceOrder };
+    workspaceOrder[id] = ids.filter((w) => w !== workspaceId);
+  }
   return {
     ...doc,
     workspaceAssignments: { ...doc.workspaceAssignments, [workspaceId]: folderId },
     workspaceManual: { ...doc.workspaceManual, [workspaceId]: true },
+    workspaceOrder,
   };
+}
+
+/**
+ * A folder's workspaces in display order; `list` comes newest first. In a folder the
+ * user put in order, workspaces that order does not hold yet, new ones and ones filed
+ * there since, come first, newest first, then the rest in the user's order.
+ */
+export function inFolderOrder<T extends { id: string }>(doc: FoldersDocument, folderId: string, list: readonly T[]): T[] {
+  const saved = doc.workspaceOrder[folderId];
+  if (!saved?.length) return [...list];
+  const rank = new Map(saved.map((id, i) => [id, i] as const));
+  const unranked = list.filter((ws) => !rank.has(ws.id));
+  const ranked = list.filter((ws) => rank.has(ws.id)).sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0));
+  return [...unranked, ...ranked];
+}
+
+/**
+ * `shown` with `id` taken out and put back just above `before`, or at the end when
+ * `before` is null; unchanged when `before` is `id` itself. Null when `before` is not
+ * in `shown`.
+ */
+export function insertBefore(shown: readonly string[], id: string, before: string | null): string[] | null {
+  if (before === id) return shown.includes(id) ? [...shown] : null;
+  const rest = shown.filter((w) => w !== id);
+  const at = before === null ? rest.length : rest.indexOf(before);
+  if (at < 0) return null;
+  return [...rest.slice(0, at), id, ...rest.slice(at)];
+}
+
+/**
+ * Puts a workspace in a folder just above workspace `before`, or at the bottom when
+ * `before` is null, and files it there by hand. `shown` is the folder's workspaces in
+ * display order, which becomes the folder's saved order with the workspace in its new
+ * place, so the list stays as the user sees it.
+ */
+export function placeWorkspace(
+  doc: FoldersDocument,
+  workspaceId: string,
+  folderId: string,
+  shown: readonly string[],
+  before: string | null,
+): FoldersDocument {
+  const order = insertBefore(shown, workspaceId, before);
+  if (!order) return doc;
+  const moved = moveWorkspace(doc, workspaceId, folderId);
+  return { ...moved, workspaceOrder: { ...moved.workspaceOrder, [folderId]: order } };
 }
 
 export function countWorkspacesByFolder(
@@ -410,14 +469,61 @@ export interface DropTarget {
 }
 
 /**
- * What a drop does: file a workspace in a folder, move conversations into another
- * workspace (all of a dragged workspace's, or the one dragged conversation), or
- * give a dragged conversation a workspace of its own in a folder.
+ * What a drop does: file a workspace in a folder, put it in place among a folder's
+ * workspaces (just above `before`, or at the bottom when that is null), move
+ * conversations into another workspace (all of a dragged workspace's, or the one
+ * dragged conversation), or give a dragged conversation a workspace of its own in a
+ * folder.
  */
 export type DropAction =
   | { kind: "file"; folderId: string }
+  | { kind: "place"; folderId: string; before: string | null }
   | { kind: "merge"; workspaceId: string }
   | { kind: "split"; folderId: string };
+
+/** Which edge of a row a pointer at height `y` is near: its top or bottom quarter, or neither. */
+export function rowEdge(row: { y: number; height: number }, y: number): "above" | "below" | null {
+  const band = row.height / 4;
+  if (y < row.y + band) return "above";
+  if (y >= row.y + row.height - band) return "below";
+  return null;
+}
+
+/**
+ * Where a workspace dropped between rows goes. `lists` holds each folder's
+ * workspaces in display order; `edge` says whether the pointer is at the top or the
+ * bottom edge of workspace row `target`. Dropping a workspace on its own folder's
+ * row puts it at the top. Null when it would stay where it is; undefined when the
+ * drop is not between rows, which leaves it to `dropAction`.
+ */
+export function placementAt(
+  doc: FoldersDocument,
+  lists: ReadonlyMap<string, readonly { id: string }[]>,
+  ws: FolderSubject,
+  target: DropTarget,
+  edge: "above" | "below" | null,
+): DropAction | null | undefined {
+  const from = workspaceFolderOf(doc, ws);
+  const ids = (folderId: string) => (lists.get(folderId) ?? []).map((w) => w.id);
+  let folderId: string;
+  let before: string | null;
+  if (target.kind === "folder") {
+    if (target.id !== from) return undefined;
+    folderId = from;
+    before = ids(from)[0] ?? null;
+  } else {
+    const holder = edge && [...lists].find(([, list]) => list.some((w) => w.id === target.id));
+    if (!holder) return undefined;
+    folderId = holder[0];
+    const shown = ids(folderId);
+    before = edge === "above" ? target.id : (shown[shown.indexOf(target.id) + 1] ?? null);
+  }
+  const shown = ids(folderId);
+  const next = insertBefore(shown, ws.id, before);
+  if (!next) return undefined;
+  if (folderId === from && next.length === shown.length && next.every((id, i) => id === shown[i])) return null;
+  return { kind: "place", folderId, before };
+}
 
 /** What dropping `subject` on `target` does, or null when it would change nothing. */
 export function dropAction(doc: FoldersDocument, subject: DragSubject, target: DropTarget | null): DropAction | null {
@@ -456,6 +562,18 @@ export function parseDropNodeId(id: string | null | undefined): DropTarget | nul
 
 export function isDropNodeId(id: string): boolean {
   return id.startsWith(DROP_ID_PREFIX);
+}
+
+/** The `part` an element ID from `dropNodeId` was made with, such as a conversation row's agent ID; null when none. */
+export function dropNodePart(id: string | null | undefined): string | null {
+  if (!parseDropNodeId(id)) return null;
+  const part = (id as string).slice(DROP_ID_PREFIX.length).split(":")[2];
+  if (!part) return null;
+  try {
+    return decodeURIComponent(part);
+  } catch {
+    return null;
+  }
 }
 
 /** Directories match when they differ only by trailing slashes; the server compares real paths. */
@@ -560,6 +678,8 @@ export function deleteFolder(doc: FoldersDocument, folderId: string): FoldersDoc
     if (id === folderId) delete workspaceManual[workspaceId];
     else workspaceAssignments[workspaceId] = id;
   }
+  const workspaceOrder = { ...doc.workspaceOrder };
+  delete workspaceOrder[folderId];
   return {
     ...doc,
     folders: doc.folders.filter((f) => f.id !== folderId),
@@ -569,6 +689,7 @@ export function deleteFolder(doc: FoldersDocument, folderId: string): FoldersDoc
     manual,
     workspaceAssignments,
     workspaceManual,
+    workspaceOrder,
     formerFolderNames,
     deletedFolderNames: [...deleted],
   };

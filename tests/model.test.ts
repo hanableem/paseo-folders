@@ -7,11 +7,14 @@ import {
   deleteFolder,
   dropAction,
   dropNodeId,
+  dropNodePart,
   folderName,
   folderOf,
   folderOrder,
   FoldersDocumentSchema,
   groupWorkspaces,
+  inFolderOrder,
+  insertBefore,
   keepFolder,
   type ListedAgent,
   markAutoTitle,
@@ -26,7 +29,10 @@ import {
   parseDropNodeId,
   parseRoute,
   placeNames,
+  placementAt,
+  placeWorkspace,
   reorderTarget,
+  rowEdge,
   renameAgent,
   renameFolder,
   SuggestionsSchema,
@@ -393,6 +399,9 @@ test("drop targets round-trip through element IDs, conversation rows standing fo
   assert.equal(parseDropNodeId("root"), null);
   assert.equal(parseDropNodeId("paseo-folders-drop:shelf:x"), null);
   assert.equal(parseDropNodeId(null), null);
+  assert.equal(dropNodePart(dropNodeId(ws, "agent:with/odd chars")), "agent:with/odd chars");
+  assert.equal(dropNodePart(dropNodeId(ws)), null);
+  assert.equal(dropNodePart("root"), null);
 });
 
 test("directories compare without trailing slashes; places read apart by project, else by path", () => {
@@ -405,4 +414,84 @@ test("directories compare without trailing slashes; places read apart by project
   const worktree = { directory: "/Users/me/Developer/app-wt", projectName: "app" };
   assert.deepEqual(placeNames(code, worktree), ["~/Developer/app", "~/Developer/app-wt"]);
   assert.deepEqual(placeNames({ directory: "/srv/a", projectName: "" }, code), ["/srv/a", "~/Developer/app"]);
+});
+
+const ids = (list: readonly { id: string }[]) => list.map((w) => w.id);
+
+test("a folder put in order keeps it, with workspaces it has not ranked yet on top, newest first", () => {
+  let doc = withFolders("Reading");
+  const r = idOf(doc, "Reading");
+  const listed = [{ id: "new2" }, { id: "w3" }, { id: "new1" }, { id: "w1" }, { id: "w2" }];
+  assert.deepEqual(ids(inFolderOrder(doc, r, listed)), ["new2", "w3", "new1", "w1", "w2"], "newest first without an order");
+  doc = { ...doc, workspaceOrder: { [r]: ["w2", "gone", "w1", "w3"] } };
+  assert.deepEqual(ids(inFolderOrder(doc, r, listed)), ["new2", "new1", "w2", "w1", "w3"]);
+  assert.deepEqual(ids(inFolderOrder(doc, UNSORTED_ID, listed)), ids(listed), "other folders keep newest first");
+});
+
+test("inserting takes the workspace out and puts it back above the given one, or at the end", () => {
+  const shown = ["a", "b", "c", "d"];
+  assert.deepEqual(insertBefore(shown, "d", "b"), ["a", "d", "b", "c"]);
+  assert.deepEqual(insertBefore(shown, "a", "d"), ["b", "c", "a", "d"]);
+  assert.deepEqual(insertBefore(shown, "b", null), ["a", "c", "d", "b"]);
+  assert.deepEqual(insertBefore(shown, "x", "a"), ["x", "a", "b", "c", "d"], "one from another folder");
+  assert.deepEqual(insertBefore(shown, "c", "c"), shown, "above itself stays put");
+  assert.equal(insertBefore(shown, "a", "missing"), null);
+});
+
+test("placing a workspace saves the folder's order as shown and files it there by hand", () => {
+  let doc = withFolders("Reading", "Chores");
+  const [r, c] = [idOf(doc, "Reading"), idOf(doc, "Chores")];
+  doc = placeWorkspace(doc, "w3", r, ["w1", "w2", "w3"], "w1");
+  assert.deepEqual(doc.workspaceOrder[r], ["w3", "w1", "w2"]);
+  assert.equal(doc.workspaceAssignments.w3, r);
+  assert.equal(doc.workspaceManual.w3, true);
+  assert.equal(doc.workspaceManual.w1, undefined, "its neighbours keep their own placement");
+  doc = placeWorkspace(doc, "w1", c, ["c1"], null);
+  assert.deepEqual(doc.workspaceOrder[c], ["c1", "w1"]);
+  assert.deepEqual(doc.workspaceOrder[r], ["w3", "w2"], "the folder it left lets go of it");
+  assert.equal(placeWorkspace(doc, "w2", r, ["w3", "w2"], "missing"), doc);
+});
+
+test("filing a workspace elsewhere drops it from other orders; deleting a folder drops its order", () => {
+  let doc = withFolders("Reading", "Chores");
+  const [r, c] = [idOf(doc, "Reading"), idOf(doc, "Chores")];
+  doc = { ...doc, workspaceOrder: { [r]: ["w1", "w2"], [c]: ["c1"] } };
+  const kept = moveWorkspace(doc, "w1", r);
+  assert.deepEqual(kept.workspaceOrder[r], ["w1", "w2"], "staying in its folder keeps its place");
+  doc = moveWorkspace(doc, "w1", c);
+  assert.deepEqual(doc.workspaceOrder[r], ["w2"]);
+  assert.deepEqual(doc.workspaceOrder[c], ["c1"], "it starts unranked, so on top, in the new folder");
+  doc = deleteFolder(doc, r);
+  assert.equal(doc.workspaceOrder[r], undefined);
+});
+
+test("a row's top and bottom quarters are its edges; the middle is the row itself", () => {
+  const row = { y: 100, height: 40 };
+  assert.equal(rowEdge(row, 100), "above");
+  assert.equal(rowEdge(row, 109), "above");
+  assert.equal(rowEdge(row, 110), null);
+  assert.equal(rowEdge(row, 129), null);
+  assert.equal(rowEdge(row, 130), "below");
+  assert.equal(rowEdge(row, 139), "below");
+});
+
+test("dropping a workspace between rows places it; dropping where it is does nothing", () => {
+  let doc = withFolders("Reading", "Chores");
+  const [r, c] = [idOf(doc, "Reading"), idOf(doc, "Chores")];
+  const ws = (id: string) => ({ id, title: id, agents: [{ id: `${id}-a` }] });
+  doc = { ...moveWorkspace(moveWorkspace(moveWorkspace(doc, "w1", r), "w2", r), "w3", r), workspaceOrder: {} };
+  const lists = new Map([[r, [ws("w1"), ws("w2"), ws("w3")]], [c, [ws("c1")]]]);
+  const row = (id: string) => ({ kind: "workspace" as const, id });
+  const folder = (id: string) => ({ kind: "folder" as const, id });
+  assert.deepEqual(placementAt(doc, lists, ws("w3"), row("w1"), "above"), { kind: "place", folderId: r, before: "w1" });
+  assert.deepEqual(placementAt(doc, lists, ws("w1"), row("w2"), "below"), { kind: "place", folderId: r, before: "w3" });
+  assert.deepEqual(placementAt(doc, lists, ws("w1"), row("w3"), "below"), { kind: "place", folderId: r, before: null });
+  assert.equal(placementAt(doc, lists, ws("w2"), row("w1"), "below"), null, "just below the row above it");
+  assert.equal(placementAt(doc, lists, ws("w2"), row("w3"), "above"), null, "just above the row below it");
+  assert.equal(placementAt(doc, lists, ws("w2"), row("w2"), "above"), null, "its own row");
+  assert.equal(placementAt(doc, lists, ws("w3"), row("w1"), null), undefined, "the middle of a row merges");
+  assert.deepEqual(placementAt(doc, lists, ws("w3"), folder(r), null), { kind: "place", folderId: r, before: "w1" }, "own folder: to the top");
+  assert.equal(placementAt(doc, lists, ws("w1"), folder(r), null), null, "already at the top");
+  assert.equal(placementAt(doc, lists, ws("w1"), folder(c), null), undefined, "another folder files it");
+  assert.deepEqual(placementAt(doc, lists, ws("w1"), row("c1"), "above"), { kind: "place", folderId: c, before: "c1" });
 });
