@@ -97,16 +97,7 @@ export async function listWorkspaceMeta(paseo: PaseoApi): Promise<Map<string, Wo
       const result = await paseo.workspaces.list({
         page: cursor ? { limit: PAGE_SIZE, cursor } : { limit: PAGE_SIZE },
       });
-      for (const ws of result.entries) {
-        meta.set(ws.id, {
-          title: ws.title?.trim() ?? "",
-          directory: ws.workspaceDirectory ?? ws.projectRootPath ?? "",
-          branch: ws.gitRuntime?.currentBranch ?? "",
-          projectRoot: ws.projectRootPath ?? ws.workspaceDirectory ?? "",
-          projectId: ws.projectId ?? "",
-          projectName: ws.projectCustomName?.trim() || ws.projectDisplayName?.trim() || "",
-        });
-      }
+      for (const ws of result.entries) meta.set(ws.id, workspaceMetaOf(ws));
       const next = result.pageInfo?.nextCursor;
       if (!result.pageInfo?.hasMore || !next) break;
       cursor = next;
@@ -115,6 +106,27 @@ export async function listWorkspaceMeta(paseo: PaseoApi): Promise<Map<string, Wo
     // Titles and paths are extras; workspaces still list with their conversation titles.
   }
   return meta;
+}
+
+type WorkspacePayload = {
+  title?: string | null;
+  workspaceDirectory?: string | null;
+  projectRootPath?: string | null;
+  gitRuntime?: { currentBranch?: string | null } | null;
+  projectId?: string | null;
+  projectCustomName?: string | null;
+  projectDisplayName?: string | null;
+};
+
+function workspaceMetaOf(ws: WorkspacePayload): WorkspaceMeta {
+  return {
+    title: ws.title?.trim() ?? "",
+    directory: ws.workspaceDirectory ?? ws.projectRootPath ?? "",
+    branch: ws.gitRuntime?.currentBranch ?? "",
+    projectRoot: ws.projectRootPath ?? ws.workspaceDirectory ?? "",
+    projectId: ws.projectId ?? "",
+    projectName: ws.projectCustomName?.trim() || ws.projectDisplayName?.trim() || "",
+  };
 }
 
 export interface DirectoryState {
@@ -165,9 +177,9 @@ function toListed(agent: AgentPayload, workspaceName: string): ListedAgent {
 }
 
 /**
- * Live directory: agents arrive through Paseo's agent subscription, so running
- * spinners and attention dots follow the daemon without polling. Workspace
- * titles refresh every minute.
+ * Live directory: agents and workspaces arrive through Paseo's subscriptions, so
+ * running spinners, attention dots and renamed workspaces follow the daemon without
+ * polling. A full pass each minute catches anything the subscriptions missed.
  */
 export function useDirectory(): DirectoryState {
   const paseo = usePaseo();
@@ -200,6 +212,37 @@ export function useDirectory(): DirectoryState {
       map.set(agent.id, toListed(agent, workspaceName ?? map.get(agent.id)?.workspaceName ?? ""));
     };
     let unsubscribe: (() => void) | null = null;
+    let unsubscribeWorkspaces: (() => void) | null = null;
+    // Workspaces the subscription changed while a full pass ran keep what it said: the pass may
+    // have read them before the change.
+    const passes = new Set<Set<string>>();
+    const putWorkspaces = (list: (WorkspacePayload & { id: string })[]) => {
+      for (const changed of passes) for (const ws of list) changed.add(ws.id);
+      setWorkspaceMeta((prev) => {
+        const next = new Map(prev);
+        for (const ws of list) next.set(ws.id, workspaceMetaOf(ws));
+        return next;
+      });
+    };
+    // A workspace renamed here, in Paseo or from the command line shows its new title at once.
+    paseoRef.current.workspaces
+      .list({ subscribe: {}, page: { limit: PAGE_SIZE } })
+      .then((result) => {
+        const stop = result.subscription.subscribe({
+          // After a reconnect the subscription sends the list again.
+          snapshot: ({ entries }) => putWorkspaces(entries),
+          update: (message) => {
+            if (message.type === "workspace_update" && message.payload.kind === "upsert") {
+              putWorkspaces([message.payload.workspace]);
+            }
+          },
+        });
+        if (stopped) stop();
+        else unsubscribeWorkspaces = stop;
+      })
+      .catch(() => {
+        // Titles still refresh with the full pass each minute.
+      });
     paseoRef.current.agents
       .list({ subscribe: {}, filter: { includeArchived: true }, page: { limit: PAGE_SIZE }, signal: lifetime.signal })
       .then((result) => {
@@ -238,11 +281,20 @@ export function useDirectory(): DirectoryState {
     // minute picks up anything beyond it, drops conversations the daemon no longer
     // has (deleted ones have lingered in the live list) and refreshes workspace titles.
     const reconcile = async () => {
+      const changed = new Set<string>();
+      passes.add(changed);
       try {
         const known = new Set(map.keys());
         const full = await fetchDirectory(paseoRef.current);
         if (stopped) return;
-        setWorkspaceMeta(full.workspaceMeta);
+        setWorkspaceMeta((prev) => {
+          const next = new Map(full.workspaceMeta);
+          for (const id of changed) {
+            const live = prev.get(id);
+            if (live) next.set(id, live);
+          }
+          return next;
+        });
         const listed = new Set(full.agents.map((agent) => agent.id));
         for (const id of known) if (!listed.has(id)) map.delete(id);
         for (const agent of full.agents) if (!map.has(agent.id)) map.set(agent.id, agent);
@@ -250,6 +302,8 @@ export function useDirectory(): DirectoryState {
         setLoading(false);
       } catch {
         // The next pass, a minute later, tries again.
+      } finally {
+        passes.delete(changed);
       }
     };
     void reconcile();
@@ -260,6 +314,7 @@ export function useDirectory(): DirectoryState {
       reconcileNow.current = () => {};
       lifetime.abort();
       unsubscribe?.();
+      unsubscribeWorkspaces?.();
       if (flushTimer !== null) clearTimeout(flushTimer);
       clearInterval(titleTimer);
     };
