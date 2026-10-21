@@ -48,6 +48,11 @@ export const FoldersDocumentSchema = z.object({
    * person writes in it again or pins it.
    */
   removedFromRecent: z.record(z.string(), z.string()).default({}),
+  /**
+   * Workspace IDs in the order the user dragged Recent into. Empty means Recent's own
+   * order: pinned first, then by last use.
+   */
+  recentOrder: z.array(z.string()).default([]),
   /** The user's name for Unsorted. Empty means "Unsorted". */
   unsortedName: z.string().max(60).default(""),
   /** How many folders come before Unsorted in the display order. */
@@ -255,7 +260,10 @@ export const RECENT_LIMIT = 8;
  * Paseo's own Pinned group, then the others, last used first. Pinned workspaces and those
  * with something to see (a reply not yet read, a question, an error or work in progress)
  * always stay; the rest fill the list up to `limit`. A workspace the person removed from
- * Recent stays out, whatever it has to see, until they write in it again.
+ * Recent stays out, whatever it has to see, until they write in it again. Once the person
+ * has dragged Recent into an `order`, it keeps that order, as a folder does. Of workspaces
+ * the order does not hold yet, those pinned or used since come on top; others, which only
+ * fill a place left empty, go at the bottom.
  */
 export function recentWorkspaces<T extends ListedWorkspace>(
   workspaces: readonly T[],
@@ -264,14 +272,17 @@ export function recentWorkspaces<T extends ListedWorkspace>(
     limit?: number;
     /** When the person removed a workspace from Recent; empty if they did not. */
     removedAt?: (workspaceId: string) => string;
+    /** The order the person dragged Recent into; empty for Recent's own. */
+    order?: readonly string[];
   } = {},
 ): T[] {
-  const { limit = RECENT_LIMIT, removedAt = () => "" } = options;
+  const { limit = RECENT_LIMIT, removedAt = () => "", order = [] } = options;
   // Only what the person writes brings it back, not a reply or another update.
   const removed = (ws: T) => {
     const at = removedAt(ws.id);
     return at !== "" && !ws.agents.some((a) => (a.lastMessageAt ?? "") > at);
   };
+  const usedAt = (ws: T) => ws.activityAt;
   const pinned = workspaces.filter((ws) => pinnedAt(ws.id)).sort((a, b) => pinnedAt(b.id).localeCompare(pinnedAt(a.id)));
   const rest = workspaces.filter((ws) => !pinnedAt(ws.id) && !removed(ws)).sort(byRecentActivity);
   const kept = new Set(rest.filter((ws) => workspaceBucket(ws) !== "done").map((ws) => ws.id));
@@ -282,7 +293,14 @@ export function recentWorkspaces<T extends ListedWorkspace>(
     kept.add(ws.id);
     room -= 1;
   }
-  return [...pinned, ...rest.filter((ws) => kept.has(ws.id))];
+  const listed = [...pinned, ...rest.filter((ws) => kept.has(ws.id))];
+  if (order.length === 0) return listed;
+  const rank = new Map(order.map((id, i) => [id, i] as const));
+  const ranked = listed.filter((ws) => rank.has(ws.id)).sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0));
+  const latest = ranked.reduce((at, ws) => (usedAt(ws) > at ? usedAt(ws) : at), "");
+  const arrived = (ws: T) => Boolean(pinnedAt(ws.id)) || usedAt(ws) > latest;
+  const unranked = listed.filter((ws) => !rank.has(ws.id));
+  return [...unranked.filter(arrived), ...ranked, ...unranked.filter((ws) => !arrived(ws))];
 }
 
 /** What decides a workspace's folder: its own placement, its title and its conversations. */
@@ -332,9 +350,10 @@ export function withoutAutoTitle(doc: FoldersDocument, workspaceIds: readonly st
   return { ...doc, autoTitle };
 }
 
-/** Takes a workspace out of Recent from `at` on, until the person writes in it again. */
+/** Takes a workspace out of Recent from `at` on, until the person writes in it again; it comes back on top. */
 export function removeFromRecent(doc: FoldersDocument, workspaceId: string, at: string): FoldersDocument {
-  return { ...doc, removedFromRecent: { ...doc.removedFromRecent, [workspaceId]: at } };
+  const out = withoutRecentPlace(doc, [workspaceId]);
+  return { ...out, removedFromRecent: { ...out.removedFromRecent, [workspaceId]: at } };
 }
 
 /** Forgets that workspaces were removed from Recent, as when one is pinned or archived. */
@@ -343,6 +362,34 @@ export function withoutRecentRemoval(doc: FoldersDocument, workspaceIds: readonl
   const removedFromRecent = { ...doc.removedFromRecent };
   for (const id of workspaceIds) delete removedFromRecent[id];
   return { ...doc, removedFromRecent };
+}
+
+/** Lets go of workspaces' places in the order Recent was dragged into, so they show on top of it. */
+export function withoutRecentPlace(doc: FoldersDocument, workspaceIds: readonly string[]): FoldersDocument {
+  if (!doc.recentOrder.some((id) => workspaceIds.includes(id))) return doc;
+  return { ...doc, recentOrder: doc.recentOrder.filter((id) => !workspaceIds.includes(id)) };
+}
+
+/** Puts Recent back in its own order: pinned first, then by last use. */
+export function resetRecentOrder(doc: FoldersDocument): FoldersDocument {
+  return doc.recentOrder.length === 0 ? doc : { ...doc, recentOrder: [] };
+}
+
+/**
+ * Puts a workspace in Recent just above workspace `before`, or at the bottom when `before`
+ * is null. `shown` is Recent in display order, which becomes its saved order with the
+ * workspace in its new place, so the list stays as the user sees it. A workspace removed
+ * from Recent is let back in.
+ */
+export function placeInRecent(
+  doc: FoldersDocument,
+  workspaceId: string,
+  shown: readonly string[],
+  before: string | null,
+): FoldersDocument {
+  const order = insertBefore(shown, workspaceId, before);
+  if (!order) return doc;
+  return withoutRecentRemoval({ ...doc, recentOrder: order }, [workspaceId]);
 }
 
 /** The most frequent non-empty value; ties go to the one seen first. */
@@ -549,14 +596,15 @@ export interface DropTarget {
 
 /**
  * What a drop does: file a workspace in a folder, put it in place among a folder's
- * workspaces (just above `before`, or at the bottom when that is null), move
- * conversations into another workspace (all of a dragged workspace's, or the one
- * dragged conversation), or give a dragged conversation a workspace of its own in a
- * folder.
+ * workspaces (just above `before`, or at the bottom when that is null) or among
+ * Recent's, move conversations into another workspace (all of a dragged workspace's,
+ * or the one dragged conversation), or give a dragged conversation a workspace of its
+ * own in a folder.
  */
 export type DropAction =
   | { kind: "file"; folderId: string }
   | { kind: "place"; folderId: string; before: string | null }
+  | { kind: "recent"; before: string | null }
   | { kind: "merge"; workspaceId: string }
   | { kind: "split"; folderId: string };
 
@@ -604,6 +652,26 @@ export function placementAt(
   return { kind: "place", folderId, before };
 }
 
+/**
+ * Where a workspace dropped at the top or bottom `edge` of the row of workspace `target`
+ * under Recent goes; `shown` is Recent in display order. Null when it would stay where it
+ * is; undefined when the drop is not between rows, which leaves it to `dropAction`.
+ */
+export function recentPlacementAt(
+  shown: readonly string[],
+  workspaceId: string,
+  target: string,
+  edge: "above" | "below" | null,
+): DropAction | null | undefined {
+  const at = shown.indexOf(target);
+  if (!edge || at < 0) return undefined;
+  const before = edge === "above" ? target : (shown[at + 1] ?? null);
+  const next = insertBefore(shown, workspaceId, before);
+  if (!next) return undefined;
+  if (next.length === shown.length && next.every((id, i) => id === shown[i])) return null;
+  return { kind: "recent", before };
+}
+
 /** What dropping `subject` on `target` does, or null when it would change nothing. */
 export function dropAction(doc: FoldersDocument, subject: DragSubject, target: DropTarget | null): DropAction | null {
   if (!target) return null;
@@ -618,8 +686,8 @@ export function dropAction(doc: FoldersDocument, subject: DragSubject, target: D
 const DROP_ID_PREFIX = "paseo-folders-drop:";
 
 /**
- * The `part` of a workspace's row under Recent. It takes merges like the workspace's row in its
- * folder, but nothing is put in place beside it: Recent keeps its own order.
+ * The `part` of a workspace's row under Recent, which takes drops like the workspace's row in
+ * its folder: between rows, a workspace is put in place among Recent's.
  */
 export const RECENT_PART = "recent";
 

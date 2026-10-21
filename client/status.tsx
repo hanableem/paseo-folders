@@ -1,8 +1,8 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 import { Icon } from "@getpaseo/plugin/client/react-native";
-import { useEffect, useMemo, useRef } from "react";
+import { type ReactNode, useEffect, useMemo, useRef } from "react";
 import { Animated, Easing, Image, Platform, View } from "react-native";
-import { type ListedWorkspace, type StatusBucket, workspaceBucket } from "../shared/model";
+import { type ListedAgent, type ListedWorkspace, type StatusBucket, workspaceBucket } from "../shared/model";
 import { PROVIDER_PATHS } from "./provider-paths";
 
 // Paseo's status colours and ring geometry, so rows read like its own sidebar.
@@ -116,38 +116,55 @@ export function mostUrgent(workspaces: readonly ListedWorkspace[]): StatusBucket
  * failed results. A workspace with no conversation yet shows an empty bubble.
  */
 export function WorkspaceIcon({ workspace, theme }: { workspace: ListedWorkspace; theme: PluginTheme }) {
-  const bucket = workspaceBucket(workspace);
-  const frame = { width: RING_FRAME, height: 16, alignItems: "center" as const, justifyContent: "center" as const };
+  if (workspace.agents.length === 0) {
+    return (
+      <View style={ICON_FRAME}>
+        <Icon name="MessageSquareDashed" size={14} color={theme.colors.foregroundMuted} />
+      </View>
+    );
+  }
+  return (
+    <StatusIcon bucket={workspaceBucket(workspace)} theme={theme}>
+      {workspace.agents.length === 1 ? (
+        <ProviderMark provider={workspace.agents[0].provider} theme={theme} />
+      ) : (
+        <Icon name="MessagesSquare" size={14} color={theme.colors.foregroundMuted} />
+      )}
+    </StatusIcon>
+  );
+}
+
+/** The icon at the start of a conversation row: as a workspace holding just that conversation shows it, a little smaller. */
+export function ConversationIcon({ agent, theme }: { agent: ListedAgent; theme: PluginTheme }) {
+  return (
+    <StatusIcon bucket={agent.bucket} theme={theme}>
+      <ProviderMark provider={agent.provider} theme={theme} size={12} />
+    </StatusIcon>
+  );
+}
+
+const ICON_FRAME = { width: RING_FRAME, height: 16, alignItems: "center" as const, justifyContent: "center" as const };
+
+/** `children`, or Paseo's ring in their place while running and an alert when input is needed; a dot on them for unread or failed results. */
+function StatusIcon({ bucket, theme, children }: { bucket: StatusBucket; theme: PluginTheme; children: ReactNode }) {
   if (bucket === "running") {
     return (
-      <View style={frame}>
+      <View style={ICON_FRAME}>
         <StatusRing theme={theme} />
       </View>
     );
   }
   if (bucket === "needs_input") {
     return (
-      <View style={frame}>
+      <View style={ICON_FRAME}>
         <Icon name="CircleAlert" size={12} color={statusColors(theme).warning} />
       </View>
     );
   }
-  if (workspace.agents.length === 0) {
-    return (
-      <View style={frame}>
-        <Icon name="MessageSquareDashed" size={14} color={theme.colors.foregroundMuted} />
-      </View>
-    );
-  }
-  const single = workspace.agents.length === 1;
   const dot = bucketColor(bucket, theme);
   return (
-    <View style={[frame, { position: "relative" }]}>
-      {single ? (
-        <ProviderMark provider={workspace.agents[0].provider} theme={theme} />
-      ) : (
-        <Icon name="MessagesSquare" size={14} color={theme.colors.foregroundMuted} />
-      )}
+    <View style={[ICON_FRAME, { position: "relative" }]}>
+      {children}
       {dot ? (
         <View
           style={{

@@ -20,6 +20,7 @@ import {
   type FoldersDocument,
   folderName,
   folderOrder,
+  type ListedAgent,
   type ListedWorkspace,
   mergeTargets,
   moveWorkspace,
@@ -27,8 +28,10 @@ import {
   removeFromRecent,
   renameConversationRpc,
   renameFolder,
+  resetRecentOrder,
   resumeCommand,
   UNSORTED_ID,
+  withoutRecentPlace,
   withoutRecentRemoval,
   workspaceFolderOf,
 } from "../shared/model";
@@ -414,6 +417,20 @@ function MenuField(props: {
   );
 }
 
+/** Runs a menu's action, then says it is done and closes the menu, or says it failed and keeps the menu open. */
+function useAct(onClose: () => void) {
+  const toast = useToast();
+  return async (work: () => Promise<unknown>, done: string, failed: string) => {
+    try {
+      await work();
+      toast.show(done, { variant: "success" });
+      onClose();
+    } catch {
+      toast.error(failed);
+    }
+  };
+}
+
 /**
  * Right-click (or long-press) menu for a workspace row. It follows Paseo's own
  * workspace menu (copy path and branch, rename, pin, archive), puts Move to folder
@@ -434,6 +451,8 @@ export function RowMenu(props: {
   mover?: Mover;
   /** It is listed under Recent, so it can be removed from there. */
   inRecent?: boolean;
+  /** Recent is in an order the user dragged it into, which it can go back from. */
+  recentOrdered?: boolean;
   onClose(): void;
   onArchived?(workspaceId: string): void;
 }) {
@@ -450,16 +469,7 @@ export function RowMenu(props: {
   const resume = single ? resumeCommand(single.provider, single.sessionId) : null;
   const current = workspaceFolderOf(folders.doc, ws);
   const pinned = Boolean(meta?.pinnedAt);
-
-  async function act(work: () => Promise<unknown>, done: string, failed: string) {
-    try {
-      await work();
-      toast.show(done, { variant: "success" });
-      onClose();
-    } catch {
-      toast.error(failed);
-    }
-  }
+  const act = useAct(onClose);
   const copy = (text: string, done: string) => void act(() => copyText(text), done, "Could not copy.");
 
   const item = (key: string, icon: string, label: string, onPress: () => void, trailing?: ReactNode) => (
@@ -598,8 +608,8 @@ export function RowMenu(props: {
           async () => {
             const result = await pin({ workspaceId: ws.id, pinned: !pinned });
             if (!result.ok) throw new Error(result.reason);
-            // Pinned, it is back in Recent for good, not only until it is unpinned.
-            if (!pinned) await folders.update((d) => withoutRecentRemoval(d, [ws.id]));
+            // Pinned, it is back in Recent for good, not only until it is unpinned, and on top.
+            if (!pinned) await folders.update((d) => withoutRecentPlace(withoutRecentRemoval(d, [ws.id]), [ws.id]));
           },
           pinned ? "Unpinned" : "Pinned to Recent",
           pinned ? "Could not unpin." : "Could not pin.",
@@ -619,6 +629,17 @@ export function RowMenu(props: {
               },
               "Removed from Recent",
               "Could not remove it from Recent.",
+            ),
+          )
+        : null}
+      {props.inRecent && props.recentOrdered
+        ? action("recent-order", "ListRestart", "Reset Recent order", () =>
+            void act(
+              async () => {
+                if (!(await folders.update(resetRecentOrder))) throw new Error("not saved");
+              },
+              "Recent is back in its own order",
+              "Could not reset the order.",
             ),
           )
         : null}
@@ -659,6 +680,133 @@ export function RowMenu(props: {
           {item("back", "ChevronLeft", ws.title, sub.close)}
           <MenuSeparator theme={theme} />
           {page(open)}
+        </>
+      ) : (
+        main
+      )}
+    </Menu>
+  );
+}
+
+/**
+ * Right-click (or long-press, or More) menu for a conversation listed under its workspace,
+ * like Paseo's tab menu: copy its resume command and agent id, or rename it. With a mover,
+ * a conversation sharing its workspace can also move to a new workspace of its own.
+ */
+export function ConversationMenu(props: {
+  ws: ListedWorkspace;
+  agent: ListedAgent;
+  at: MenuPoint;
+  theme: PluginTheme;
+  /** Leave out to hide moving it to a new workspace. */
+  mover?: Mover;
+  onClose(): void;
+}) {
+  const { ws, agent, theme, mover, onClose } = props;
+  const renameTab = useRpc(renameConversationRpc);
+  const toast = useToast();
+  const sub = useSubmenu<"rename">();
+  const [draft, setDraft] = useState(agent.title);
+  const [refocus, setRefocus] = useState(0);
+  const resume = resumeCommand(agent.provider, agent.sessionId);
+  const act = useAct(onClose);
+  const copy = (text: string, done: string) => void act(() => copyText(text), done, "Could not copy.");
+
+  const action = (key: string, icon: string, label: string, onPress: () => void, trailing?: ReactNode) => (
+    <MenuItem
+      key={key}
+      theme={theme}
+      icon={icon}
+      label={label}
+      onPress={onPress}
+      trailing={trailing}
+      onHoverIn={sub.onHoverOther}
+    />
+  );
+  const chevron = <Icon name="ChevronRight" size={14} color={theme.colors.foregroundMuted} />;
+
+  const save = () => {
+    const title = draft.trim();
+    if (!title) return;
+    // Saving the name as it was would say Renamed while nothing changed.
+    if (title === agent.title.trim()) {
+      toast.show("Type a new name first, then press Save.", { variant: "info" });
+      setRefocus((n) => n + 1);
+      return;
+    }
+    void act(
+      async () => {
+        const result = await renameTab({ agentId: agent.id, title });
+        if (!result.ok) throw new Error(result.reason);
+      },
+      "Renamed",
+      "Could not rename.",
+    );
+  };
+  const renamePage = (
+    <>
+      <MenuField
+        theme={theme}
+        value={draft}
+        onChangeText={(text) => {
+          sub.typing();
+          setDraft(text);
+        }}
+        label="Conversation title"
+        selectAll
+        focusKey={refocus}
+        onSubmit={save}
+      />
+      <MenuItem theme={theme} icon="Check" label="Save" onPress={save} />
+    </>
+  );
+
+  const main = (
+    <>
+      {resume ? action("resume", "Copy", "Copy resume command", () => copy(resume, "Resume command copied")) : null}
+      {action(
+        "agent-id",
+        "Copy",
+        "Copy agent id",
+        () => copy(agent.id, "Agent id copied"),
+        <MenuHint theme={theme}>{agent.id.slice(0, 7)}</MenuHint>,
+      )}
+      <MenuItem
+        theme={theme}
+        icon="Pencil"
+        label="Rename conversation"
+        trailing={chevron}
+        {...sub.opener("rename", () => setDraft(agent.title))}
+      />
+      {mover && ws.agents.length > 1 ? (
+        <>
+          <MenuSeparator theme={theme} />
+          {action("split", "SquareSplitHorizontal", "Move to a new workspace", () => {
+            onClose();
+            void mover.split(ws, agent);
+          })}
+        </>
+      ) : null}
+    </>
+  );
+
+  return (
+    <Menu
+      at={props.at}
+      label={`Menu for ${agent.title}`}
+      theme={theme}
+      onClose={onClose}
+      submenu={
+        sub.beside && sub.open
+          ? { label: "Rename conversation", anchor: sub.anchor, onEnter: sub.keep, content: renamePage }
+          : null
+      }
+    >
+      {!sub.beside && sub.open ? (
+        <>
+          <MenuItem theme={theme} icon="ChevronLeft" label={agent.title} onPress={sub.close} />
+          <MenuSeparator theme={theme} />
+          {renamePage}
         </>
       ) : (
         main

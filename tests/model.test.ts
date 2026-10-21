@@ -29,11 +29,14 @@ import {
   parseDropNodeId,
   parseRoute,
   placeNames,
+  placeInRecent,
   placementAt,
   placeWorkspace,
   RECENT_PART,
+  recentPlacementAt,
   recentWorkspaces,
   removeFromRecent,
+  resetRecentOrder,
   reorderTarget,
   rowEdge,
   renameAgent,
@@ -45,6 +48,7 @@ import {
   UNSORTED_ID,
   workspaceBucket,
   withoutAutoTitle,
+  withoutRecentPlace,
   withoutRecentRemoval,
   workspaceFolderOf,
 } from "../shared/model.ts";
@@ -553,4 +557,47 @@ test("the document keeps a workspace removed from Recent until it is pinned or a
   assert.deepEqual(removed.removedFromRecent, { w1: "2026-01-06T00:00:00Z" });
   assert.deepEqual(withoutRecentRemoval(removed, ["w1", "w2"]).removedFromRecent, {});
   assert.equal(withoutRecentRemoval(doc, ["w1"]), doc, "nothing to forget");
+});
+
+test("Recent dragged into order keeps it; workspaces pinned or used since come on top, others at the bottom", () => {
+  const day = (d: number) => `2026-01-${String(d).padStart(2, "0")}T00:00:00Z`;
+  const listed = groupWorkspaces([1, 2, 3, 4, 5].map((d) => agent(`a${d}`, `w${d}`, day(d))), new Map());
+  const ids = (order: string[], pins: Record<string, string> = { w1: day(20) }) =>
+    recentWorkspaces(listed, (id) => pins[id] ?? "", { limit: 4, order }).map((ws) => ws.id);
+  assert.deepEqual(ids([]), ["w1", "w5", "w4", "w3"], "its own order");
+  assert.deepEqual(ids(["w3", "w1", "w5", "w4"]), ["w3", "w1", "w5", "w4"]);
+  // w5 and w4 were used after any workspace the order holds; the order does not bring back w2.
+  assert.deepEqual(ids(["w2", "w3", "w1"]), ["w5", "w4", "w3", "w1"]);
+  // w4 only fills a place left empty.
+  assert.deepEqual(ids(["w5", "w3", "w1"]), ["w5", "w3", "w1", "w4"]);
+  assert.deepEqual(ids(["w5", "w4", "w1"], { w1: day(20), w2: day(21) }), ["w2", "w5", "w4", "w1"], "pinned since");
+});
+
+test("dropping a workspace between Recent's rows puts it there; dropping where it is does nothing", () => {
+  const shown = ["w1", "w2", "w3"];
+  assert.deepEqual(recentPlacementAt(shown, "w3", "w1", "above"), { kind: "recent", before: "w1" });
+  assert.deepEqual(recentPlacementAt(shown, "w1", "w2", "below"), { kind: "recent", before: "w3" });
+  assert.deepEqual(recentPlacementAt(shown, "w1", "w3", "below"), { kind: "recent", before: null });
+  assert.deepEqual(recentPlacementAt(shown, "w9", "w2", "above"), { kind: "recent", before: "w2" }, "one not in Recent");
+  assert.equal(recentPlacementAt(shown, "w2", "w1", "below"), null, "just below the row above it");
+  assert.equal(recentPlacementAt(shown, "w2", "w2", "above"), null, "its own row");
+  assert.equal(recentPlacementAt(shown, "w3", "w1", null), undefined, "the middle of a row merges");
+  assert.equal(recentPlacementAt(shown, "w3", "missing", "above"), undefined);
+});
+
+test("placing a workspace in Recent saves its order as shown; removing a workspace lets go of its place", () => {
+  let doc = removeFromRecent(empty(), "w9", "2026-01-06T00:00:00Z");
+  doc = placeInRecent(doc, "w3", ["w1", "w2", "w3"], "w1");
+  assert.deepEqual(doc.recentOrder, ["w3", "w1", "w2"]);
+  doc = placeInRecent(doc, "w9", ["w3", "w1", "w2"], null);
+  assert.deepEqual(doc.recentOrder, ["w3", "w1", "w2", "w9"]);
+  assert.deepEqual(doc.removedFromRecent, {}, "a removed workspace placed there is let back in");
+  assert.equal(placeInRecent(doc, "w1", ["w3", "w1"], "missing"), doc);
+  doc = removeFromRecent(doc, "w1", "2026-01-07T00:00:00Z");
+  assert.deepEqual(doc.recentOrder, ["w3", "w2", "w9"], "back on top when it returns");
+  assert.deepEqual(withoutRecentPlace(doc, ["w2", "w5"]).recentOrder, ["w3", "w9"]);
+  assert.equal(withoutRecentPlace(doc, ["w1"]), doc, "no place to let go of");
+  assert.deepEqual(resetRecentOrder(doc).recentOrder, []);
+  const plain = empty();
+  assert.equal(resetRecentOrder(plain), plain, "already in its own order");
 });

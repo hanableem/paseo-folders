@@ -1,5 +1,5 @@
 import type { PluginTheme } from "@getpaseo/plugin";
-import { type PluginSidebarItemProps, usePaseo } from "@getpaseo/plugin/client";
+import { type PluginSidebarItemProps, usePaseo, useRpc } from "@getpaseo/plugin/client";
 import { Icon, useToast } from "@getpaseo/plugin/client/react-native";
 import { SidebarRow } from "@getpaseo/plugin/client/ui";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -37,9 +37,12 @@ import {
   moveWorkspace,
   parseDropNodeId,
   parseRoute,
+  pinWorkspaceRpc,
+  placeInRecent,
   placementAt,
   RECENT_PART,
   placeWorkspace,
+  recentPlacementAt,
   recentWorkspaces,
   reorderTarget,
   rowEdge,
@@ -47,13 +50,14 @@ import {
   type StatusBucket,
   UNSORTED_ID,
   withoutAutoTitle,
+  withoutRecentPlace,
   withoutRecentRemoval,
   workspaceFolderOf,
 } from "../shared/model";
 import { useArchiveAbandoned, useAutoImport, useAutoTitle, useDirectory, useFolders } from "./data";
-import { FolderMenu, type MenuPoint, RowMenu, tint } from "./menu";
+import { ConversationMenu, FolderMenu, type MenuPoint, RowMenu, tint } from "./menu";
 import { useMover } from "./move";
-import { BucketIndicator, mostUrgent, ProviderMark, WorkspaceIcon } from "./status";
+import { BucketIndicator, ConversationIcon, mostUrgent, WorkspaceIcon } from "./status";
 import { MoveConfirm } from "./ui";
 import { currentPathname, idAtPoint, rectOfId } from "./web-dom";
 
@@ -76,9 +80,13 @@ const SCROLL_NODE_ID = "paseo-folders-scroll";
 
 const sameTarget = (a: DropTarget | null, b: DropTarget | null) => a?.kind === b?.kind && a?.id === b?.id;
 
-/** The row under a dragged workspace or conversation, and whether the pointer is at its top or bottom edge. */
-type Hover = { target: DropTarget; edge: "above" | "below" | null };
-const sameHover = (a: Hover | null, b: Hover | null) => sameTarget(a?.target ?? null, b?.target ?? null) && a?.edge === b?.edge;
+/**
+ * The row under a dragged workspace or conversation, whether the pointer is at its top or
+ * bottom edge, and whether the row is under Recent.
+ */
+type Hover = { target: DropTarget; edge: "above" | "below" | null; recent: boolean };
+const sameHover = (a: Hover | null, b: Hover | null) =>
+  sameTarget(a?.target ?? null, b?.target ?? null) && a?.edge === b?.edge && a?.recent === b?.recent;
 
 /** What a sidebar row drags: a workspace or conversation to file or merge, or a folder to put in order. */
 type Dragged = DragSubject | { kind: "folder"; folder: Folder };
@@ -100,12 +108,15 @@ const AT_END = "";
  * for the menu, which does the same. Folders are dragged into order with the
  * mouse, and right-clicked (or More on touch screens) to add, rename or delete.
  * Recent, above the folders, lists the workspaces pinned in Paseo and the ones used
- * last, so the few in hand are one press away; the menu pins and unpins. A drag
- * dropped anywhere on a workspace there merges into it: Recent keeps its own order.
+ * last, so the few in hand are one press away; the menu pins and unpins. Its rows take
+ * drops as a folder's do: a workspace dropped between them is put in place there (one
+ * not in Recent yet is pinned), and the middle of a row merges. A conversation listed
+ * under its workspace has a menu of its own, to rename it.
  */
 export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginSidebarItemProps) {
   const toast = useToast();
   const paseo = usePaseo();
+  const pin = useRpc(pinWorkspaceRpc);
   const folders = useFolders();
   const { workspaces: listed, workspaceMeta, loading, refresh } = useDirectory();
   const { height: windowHeight } = useWindowDimensions();
@@ -135,6 +146,7 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
   const [headerHovered, setHeaderHovered] = useState(false);
   const [menu, setMenu] = useState<
     | { kind: "workspace"; ws: ListedWorkspace; at: MenuPoint }
+    | { kind: "conversation"; ws: ListedWorkspace; agent: ListedAgent; at: MenuPoint }
     /** A folder's menu; with no folder, the header's New folder. */
     | { kind: "folder"; folderId: string | null; at: MenuPoint }
     | null
@@ -173,9 +185,11 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
   const ready = folders.status === "ready" ? folders : null;
   const orderKey = ready ? folderOrder(ready.doc).map((f) => f.id).join("\n") : "";
   useEffect(() => setPlaced(null), [orderKey]);
-  const placeKey = ready ? JSON.stringify([ready.doc.workspaceOrder, ready.doc.workspaceAssignments]) : "";
+  const placeKey = ready
+    ? JSON.stringify([ready.doc.workspaceOrder, ready.doc.workspaceAssignments, ready.doc.recentOrder])
+    : "";
   useEffect(() => setPlacedDoc(null), [placeKey]);
-  /** The folders as shown: as saved, or as a drop just left them. */
+  /** The folders and Recent as shown: as saved, or as a drop just left them. */
   const doc = placedDoc ?? ready?.doc ?? null;
 
   // A workspace made from a folder has no conversation yet, so Paseo lists no agent
@@ -221,13 +235,13 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
     return map;
   }, [doc, workspaces]);
   const lists = (drag && frozen.current) || byFolder;
-  const savedDoc = ready?.doc;
   const recent = useMemo(
     () =>
       recentWorkspaces(workspaces, (id) => workspaceMeta.get(id)?.pinnedAt ?? "", {
-        removedAt: (id) => savedDoc?.removedFromRecent[id] ?? "",
+        removedAt: (id) => doc?.removedFromRecent[id] ?? "",
+        order: doc?.recentOrder,
       }),
-    [workspaces, workspaceMeta, savedDoc],
+    [workspaces, workspaceMeta, doc],
   );
   const recentShown = (drag && frozenRecent.current) || recent;
 
@@ -326,25 +340,29 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
     const nodeId = idAtPoint(x, y, isDropNodeId);
     const target = parseDropNodeId(nodeId);
     if (!target || !nodeId) return null;
-    if (target.kind !== "workspace") return { target, edge: null };
+    if (target.kind !== "workspace") return { target, edge: null, recent: false };
     const rect = rectOfId(nodeId);
     const edge = rect ? rowEdge(rect, y) : null;
+    // A row under Recent has a part starting with RECENT_PART; a conversation's row adds its agent ID.
+    const part = dropNodePart(nodeId);
+    const recent = part === RECENT_PART || Boolean(part?.startsWith(`${RECENT_PART}/`));
+    const agentId = recent ? (part?.slice(RECENT_PART.length + 1) ?? "") : (part ?? "");
     // A listed workspace's conversations follow its row, so between it and the next
     // workspace is the bottom edge of its last conversation.
-    const ws = [...lists.values()].flat().find((w) => w.id === target.id);
-    const listing = Boolean(ws && ws.agents.length > 1 && opened.has(ws.id));
-    const part = dropNodePart(nodeId);
-    if (part === RECENT_PART || part?.startsWith(`${RECENT_PART}/`)) return { target, edge: null };
-    if (part === null) return { target, edge: listing && edge === "below" ? null : edge };
+    const ws = (recent ? recentShown : [...lists.values()].flat()).find((w) => w.id === target.id);
+    const listing = Boolean(ws && ws.agents.length > 1 && (recent ? openedInRecent : opened).has(ws.id));
+    if (!agentId) return { target, edge: listing && edge === "below" ? null : edge, recent };
     const last = ws?.agents[ws.agents.length - 1]?.id;
-    return { target, edge: edge === "below" && part === last ? "below" : null };
+    return { target, edge: edge === "below" && agentId === last ? "below" : null, recent };
   };
 
   /** What dropping `subject` at `at` does: put a workspace between rows, or what `dropAction` says for the row. */
   const actionFor = (subject: DragSubject, at: Hover | null): DropAction | null => {
     if (!doc || !at) return null;
     if (subject.kind === "workspace") {
-      const placement = placementAt(doc, lists, subject.ws, at.target, at.edge);
+      const placement = at.recent
+        ? recentPlacementAt(recentShown.map((w) => w.id), subject.ws.id, at.target.id, at.edge)
+        : placementAt(doc, lists, subject.ws, at.target, at.edge);
       if (placement !== undefined) return placement;
     }
     return dropAction(doc, subject, at.target);
@@ -361,6 +379,34 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
       setPlacedDoc(null);
       toast.error("Could not reorder. Try again.");
     });
+  }
+
+  /**
+   * Puts a workspace among Recent's as the drop showed it, and shows it there until that is
+   * saved. One not in Recent yet is pinned, so it stays there.
+   */
+  function placeRecent(ws: ListedWorkspace, before: string | null) {
+    if (!ready || !doc) return;
+    const shown = recentShown.map((w) => w.id);
+    const joining = !shown.includes(ws.id);
+    const change = (d: FoldersDocument) => placeInRecent(d, ws.id, shown, before);
+    setPlacedDoc(change(doc));
+    void (async () => {
+      if (joining) {
+        const result = await pin({ workspaceId: ws.id, pinned: true });
+        if (!result.ok) {
+          setPlacedDoc(null);
+          toast.error("Could not pin it to Recent.");
+          return;
+        }
+      }
+      if (await ready.update(change)) {
+        if (joining) toast.show("Pinned to Recent", { variant: "success" });
+        return;
+      }
+      setPlacedDoc(null);
+      toast.error(joining ? "Pinned to Recent, but could not put it in place." : "Could not reorder. Try again.");
+    })();
   }
 
   const openMenu = (ws: ListedWorkspace, at: MenuPoint) => {
@@ -395,6 +441,8 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
   function perform(subject: DragSubject, action: DropAction) {
     if (action.kind === "place") {
       if (subject.kind === "workspace") place(subject.ws, action.folderId, action.before);
+    } else if (action.kind === "recent") {
+      if (subject.kind === "workspace") placeRecent(subject.ws, action.before);
     } else if (action.kind === "file") {
       void moveTo(subject.ws, action.folderId, nameOf(action.folderId));
     } else if (action.kind === "split") {
@@ -560,7 +608,8 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
   // What the drop would do, shown on the target row, or as a line between rows, and beside the pointer.
   const action = filing ? actionFor(filing, hover) : null;
   const placing = action?.kind === "place" ? action : null;
-  const dropOn = action && !placing ? (hover?.target ?? null) : null;
+  const recentLine = action?.kind === "recent" ? action.before : undefined;
+  const dropOn = action && !placing && recentLine === undefined ? (hover?.target ?? null) : null;
   let hint = "";
   if (filing && action) {
     if (action.kind === "file") hint = `Move to ${nameOf(action.folderId)}`;
@@ -569,6 +618,14 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
       if (action.before === null) hint = `Move to the bottom of ${nameOf(action.folderId)}`;
       else if (action.before === first) hint = `Move to the top of ${nameOf(action.folderId)}`;
       else hint = `Move above “${titleOf(action.before)}”`;
+    } else if (action.kind === "recent") {
+      // One not in Recent yet is pinned there.
+      const joining = !recentShown.some((w) => w.id === filing.ws.id);
+      const first = recentShown.find((w) => w.id !== filing.ws.id)?.id;
+      const verb = joining ? "Pin" : "Move";
+      if (action.before === null) hint = `${verb} to the bottom of Recent`;
+      else if (action.before === first) hint = `${verb} to the top of Recent`;
+      else hint = joining ? `Pin to Recent above “${titleOf(action.before)}”` : `Move above “${titleOf(action.before)}”`;
     } else if (action.kind === "split") hint = `New workspace in ${nameOf(action.folderId)}`;
     else {
       const from = workspaceMeta.get(filing.ws.id)?.directory;
@@ -619,6 +676,7 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
             const listing = ws.agents.length > 1 && openedInRecent.has(ws.id);
             return (
               <Fragment key={`recent-${ws.id}`}>
+                {recentLine === ws.id ? <InsertLine theme={theme} /> : null}
                 <WorkspaceItem
                   ws={ws}
                   theme={theme}
@@ -645,6 +703,7 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
                         recent
                         dragRef={dragRef}
                         onOpen={() => openConversation(ws, agent)}
+                        onMenu={(at) => setMenu({ kind: "conversation", ws, agent, at })}
                       />
                     ))
                   : null}
@@ -652,6 +711,7 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
             );
           })
         : null}
+      {recentOpen && recentLine === null ? <InsertLine theme={theme} end /> : null}
       {groups.map((folder) => {
         const list = lists.get(folder.id) ?? [];
         const open = shownOpen.has(folder.id);
@@ -714,6 +774,7 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
                           dropTarget={target}
                           dragRef={dragRef}
                           onOpen={() => openConversation(ws, agent)}
+                          onMenu={(at) => setMenu({ kind: "conversation", ws, agent, at })}
                         />
                       ))
                     : null}
@@ -769,11 +830,23 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
           workspaces={workspaces}
           mover={mover}
           inRecent={recent.some((ws) => ws.id === menu.ws.id)}
+          recentOrdered={recent.some((ws) => ready.doc.recentOrder.includes(ws.id))}
           onClose={closeMenu}
           onArchived={(id) => {
             if (freshWorkspaces.delete(id)) setFresh(new Map(freshWorkspaces));
-            void ready.update((d) => withoutRecentRemoval(withoutAutoTitle(d, [id]), [id]));
+            void ready.update((d) => withoutRecentPlace(withoutRecentRemoval(withoutAutoTitle(d, [id]), [id]), [id]));
           }}
+        />
+      ) : null}
+      {menu?.kind === "conversation" ? (
+        <ConversationMenu
+          key={menu.agent.id}
+          ws={menu.ws}
+          agent={menu.agent}
+          at={menu.at}
+          theme={theme}
+          mover={mover}
+          onClose={closeMenu}
         />
       ) : null}
       {menu?.kind === "folder" && (menu.folderId === null || menuFolder) ? (
@@ -1108,8 +1181,7 @@ function FolderItem(props: {
 
 /**
  * A workspace row with Paseo-style status, its title, and how many conversations it holds.
- * Under Recent it also shows a pin when pinned; dropped on, the whole row merges, since Recent
- * keeps its own order.
+ * Under Recent it also shows a pin when pinned.
  */
 function WorkspaceItem(props: {
   ws: ListedWorkspace;
@@ -1211,7 +1283,11 @@ function WorkspaceItem(props: {
   );
 }
 
-/** One conversation of a listed workspace, indented under it; drag it out to move it. */
+/**
+ * One conversation of a listed workspace, indented under it, with its status in front as a
+ * workspace row has it. Drag it out to move it; right-click it, long-press it or press its
+ * More button for its menu.
+ */
 function ConversationItem(props: {
   ws: ListedWorkspace;
   agent: ListedAgent;
@@ -1219,14 +1295,23 @@ function ConversationItem(props: {
   lifted: boolean;
   /** A drag is over this conversation's workspace. */
   dropTarget: boolean;
-  /** Under its workspace's row in Recent, which takes merges but places nothing beside it. */
+  /** Under its workspace's row in Recent. */
   recent?: boolean;
   dragRef: { current: DragApi };
   onOpen(): void;
+  onMenu(at: MenuPoint): void;
 }) {
   const { ws, agent, theme } = props;
   const [hovered, setHovered] = useState(false);
   const panHandlers = useRowDrag(props.dragRef, () => ({ kind: "conversation", ws, agent }));
+  // React Native Web forwards onContextMenu to the DOM; native platforms ignore it.
+  const contextMenu = {
+    onContextMenu: (event: { preventDefault?: () => void }) => {
+      event.preventDefault?.();
+      props.onMenu(pointOf(event));
+    },
+  } as object;
+  const web = Platform.OS === "web";
   const style = (state: PressableStateCallbackType) => ({
     flexDirection: "row" as const,
     alignItems: "center" as const,
@@ -1250,17 +1335,32 @@ function ConversationItem(props: {
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={agent.title}
-        accessibilityHint="Drag onto another workspace to move it there, or onto a folder to give it a workspace of its own"
+        accessibilityHint={
+          web
+            ? "Right-click for more. Drag onto another workspace to move it there, or onto a folder to give it a workspace of its own"
+            : "Long press for more"
+        }
         onPress={props.onOpen}
+        onLongPress={web ? undefined : (event: GestureResponderEvent) => props.onMenu(pointOf(event))}
         onHoverIn={() => setHovered(true)}
         onHoverOut={() => setHovered(false)}
+        delayLongPress={450}
         style={style}
+        {...contextMenu}
       >
-        <ProviderMark provider={agent.provider} theme={theme} size={12} />
+        <ConversationIcon agent={agent} theme={theme} />
         <Text numberOfLines={1} style={{ flex: 1, color: theme.colors.foregroundMuted, fontSize: 12 }}>
           {agent.title}
         </Text>
-        <BucketIndicator bucket={agent.bucket} theme={theme} />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`More for ${agent.title}`}
+          onPress={(event) => props.onMenu(pointOf(event))}
+          hitSlop={6}
+          style={{ width: 18, alignItems: "center", opacity: hovered ? 1 : 0 }}
+        >
+          <Icon name="EllipsisVertical" size={14} color={theme.colors.foregroundMuted} />
+        </Pressable>
       </Pressable>
     </View>
   );
