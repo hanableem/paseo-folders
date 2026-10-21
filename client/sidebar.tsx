@@ -38,6 +38,7 @@ import {
   parseDropNodeId,
   parseRoute,
   placementAt,
+  RECENT_PART,
   placeWorkspace,
   recentWorkspaces,
   reorderTarget,
@@ -92,7 +93,8 @@ const AT_END = "";
  * for the menu, which does the same. Folders are dragged into order with the
  * mouse, and right-clicked (or More on touch screens) to add, rename or delete.
  * Recent, above the folders, lists the workspaces pinned in Paseo and the ones used
- * last, so the few in hand are one press away; the menu pins and unpins.
+ * last, so the few in hand are one press away; the menu pins and unpins. A drag
+ * dropped anywhere on a workspace there merges into it: Recent keeps its own order.
  */
 export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginSidebarItemProps) {
   const toast = useToast();
@@ -292,6 +294,7 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
     const ws = [...lists.values()].flat().find((w) => w.id === target.id);
     const listing = Boolean(ws && ws.agents.length > 1 && opened.has(ws.id));
     const part = dropNodePart(nodeId);
+    if (part === RECENT_PART) return { target, edge: null };
     if (part === null) return { target, edge: listing && edge === "below" ? null : edge };
     const last = ws?.agents[ws.agents.length - 1]?.id;
     return { target, edge: edge === "below" && part === last ? "below" : null };
@@ -522,7 +525,7 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
               theme={theme}
               active={showing.id === ws.id}
               lifted={drag?.subject.kind === "workspace" && drag.subject.ws.id === ws.id}
-              dropTarget={false}
+              dropTarget={dropOn?.kind === "workspace" && dropOn.id === ws.id}
               listing={false}
               recent
               pinned={Boolean(workspaceMeta.get(ws.id)?.pinnedAt)}
@@ -987,8 +990,8 @@ function FolderItem(props: {
 
 /**
  * A workspace row with Paseo-style status, its title, and how many conversations it holds.
- * Under Recent it leaves out the count, is no drop target (its folder's row is) and shows
- * a pin when pinned.
+ * Under Recent it leaves out the count and shows a pin when pinned; dropped on, the whole row
+ * merges, since Recent keeps its own order.
  */
 function WorkspaceItem(props: {
   ws: ListedWorkspace;
@@ -1038,7 +1041,7 @@ function WorkspaceItem(props: {
   const muted = theme.colors.foregroundMuted;
   return (
     <View
-      nativeID={props.recent ? `paseo-folders-recent:${encodeURIComponent(ws.id)}` : dropNodeId({ kind: "workspace", id: ws.id })}
+      nativeID={dropNodeId({ kind: "workspace", id: ws.id }, props.recent ? RECENT_PART : "")}
       {...panHandlers}
       collapsable={false}
     >

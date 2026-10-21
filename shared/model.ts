@@ -587,6 +587,12 @@ export function dropAction(doc: FoldersDocument, subject: DragSubject, target: D
 const DROP_ID_PREFIX = "paseo-folders-drop:";
 
 /**
+ * The `part` of a workspace's row under Recent. It takes merges like the workspace's row in its
+ * folder, but nothing is put in place beside it: Recent keeps its own order.
+ */
+export const RECENT_PART = "recent";
+
+/**
  * The element ID that marks a sidebar row as a drop target, so a drop is matched
  * to whatever row is under the pointer when it lands. `part` tells apart several
  * rows of one target.

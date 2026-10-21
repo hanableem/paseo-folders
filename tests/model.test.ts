@@ -31,6 +31,7 @@ import {
   placeNames,
   placementAt,
   placeWorkspace,
+  RECENT_PART,
   recentWorkspaces,
   reorderTarget,
   rowEdge,
@@ -392,7 +393,7 @@ test("drops file a workspace, move conversations into another workspace, or give
   assert.deepEqual(dropAction(doc, { kind: "workspace", ws: one }, workspace("wn")), { kind: "merge", workspaceId: "wn" });
 });
 
-test("drop targets round-trip through element IDs, conversation rows standing for their workspace", () => {
+test("drop targets round-trip through element IDs, conversation and Recent rows standing for their workspace", () => {
   const ws = { kind: "workspace" as const, id: "wks_1" };
   assert.deepEqual(parseDropNodeId(dropNodeId(ws)), ws);
   assert.deepEqual(parseDropNodeId(dropNodeId(ws, "agent:with/odd chars")), ws);
@@ -403,6 +404,10 @@ test("drop targets round-trip through element IDs, conversation rows standing fo
   assert.equal(dropNodePart(dropNodeId(ws, "agent:with/odd chars")), "agent:with/odd chars");
   assert.equal(dropNodePart(dropNodeId(ws)), null);
   assert.equal(dropNodePart("root"), null);
+  // A workspace listed twice, under Recent and in its folder, has two rows with IDs of their own.
+  assert.deepEqual(parseDropNodeId(dropNodeId(ws, RECENT_PART)), ws);
+  assert.equal(dropNodePart(dropNodeId(ws, RECENT_PART)), RECENT_PART);
+  assert.notEqual(dropNodeId(ws, RECENT_PART), dropNodeId(ws));
 });
 
 test("directories compare without trailing slashes; places read apart by project, else by path", () => {
