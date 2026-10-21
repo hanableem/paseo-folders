@@ -4,12 +4,13 @@
 //   node scripts/move-agent.mjs <agent-id> <target-directory> [--dry-run]
 //
 // Paseo cannot change an agent's directory. This script creates a local workspace in the
-// target directory, deletes the agent's Paseo record and imports its provider session into the
-// new workspace. The provider session is not touched: Claude Code resumes a session by id from
-// any directory and keeps writing to the transcript where the session started, so the history
-// stays. The agent gets a new Paseo id; its title, labels, mode, model and thinking option are
-// carried over, and so are its folder, hand placement and note in Folders. When nothing else is
-// left in the old workspace, it is archived and the new one takes its title and pin.
+// target directory, archives and deletes the agent's Paseo record and imports its provider
+// session into the new workspace. The provider session is not touched: Claude Code resumes a
+// session by id from any directory and keeps writing to the transcript where the session
+// started, so the history stays. The agent gets a new Paseo id; its title, labels, mode, model
+// and thinking option are carried over, and so are its folder, hand placement and note in
+// Folders. When nothing else is left in the old workspace, it is archived and the new one takes
+// its title and pin.
 //
 // Before deleting anything, the script saves the agent as Paseo returned it under
 // <Paseo home>/paseo-folders/moves/. If the import fails, it imports the session back into the
@@ -105,7 +106,17 @@ async function main(client) {
   if (!workspaceId) throw new Error("could not read the new workspace id");
 
   const labels = agent.labels && Object.keys(agent.labels).length > 0 ? agent.labels : undefined;
-  await client.deleteAgent(id);
+  // Paseo tells only the connection that deletes an agent (getpaseo/paseo#4870), so a Paseo window
+  // showing the conversation would keep its tab. Every window hears about an archive.
+  await client.archiveAgent(id);
+  try {
+    await client.deleteAgent(id);
+  } catch (error) {
+    // Importing the session where it was brings the archived record back.
+    await client.importAgent({ provider, sessionId, workspaceId: fromWorkspaceId, cwd, labels }).catch(() => {});
+    run(["workspace", "archive", workspaceId]);
+    throw error;
+  }
   let moved;
   try {
     moved = await client.importAgent({ provider, sessionId, workspaceId, cwd: targetDir, labels });

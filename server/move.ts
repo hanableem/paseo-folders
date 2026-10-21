@@ -182,7 +182,16 @@ async function moveAcrossDirectories(
   writeFileSync(saved, `${JSON.stringify({ to: { workspaceId, directory }, agent, fromWorkspace: source }, null, 2)}\n`);
 
   const labels = agent.labels && Object.keys(agent.labels).length > 0 ? agent.labels : undefined;
-  await client.deleteAgent(agent.id);
+  // Paseo tells only the connection that deletes an agent (getpaseo/paseo#4870), so a Paseo window
+  // showing the conversation would keep its tab. Every window hears about an archive.
+  await client.archiveAgent(agent.id);
+  try {
+    await client.deleteAgent(agent.id);
+  } catch (error) {
+    // Importing the session where it was brings the archived record back.
+    await client.importAgent({ provider, sessionId, workspaceId: sourceWorkspaceId, cwd, labels }).catch(() => undefined);
+    throw error;
+  }
   let movedId: string;
   try {
     movedId = (await client.importAgent({ provider, sessionId, workspaceId, cwd: directory, labels })).id;
