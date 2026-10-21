@@ -369,12 +369,24 @@ function MenuField(props: {
   placeholder?: string;
   /** Selects the text, so typing replaces it. */
   selectAll?: boolean;
+  /** Changing it puts the cursor back in the field, selecting the text with selectAll. */
+  focusKey?: number;
   onSubmit?(): void;
 }) {
   const c = props.theme.colors;
+  const input = useRef<TextInput | null>(null);
+  const { focusKey, selectAll } = props;
+  useEffect(() => {
+    if (!focusKey) return;
+    // On the web the field is the page's input element, which can select its text.
+    const field = input.current as unknown as { focus(): void; select?(): void } | null;
+    field?.focus();
+    if (selectAll) field?.select?.();
+  }, [focusKey, selectAll]);
   return (
     <View style={{ marginHorizontal: 4, paddingVertical: 4 }}>
       <TextInput
+        ref={input}
         value={props.value}
         onChangeText={props.onChangeText}
         autoFocus
@@ -426,6 +438,7 @@ export function RowMenu(props: {
   const toast = useToast();
   const sub = useSubmenu<Page>();
   const [draft, setDraft] = useState(ws.title);
+  const [refocus, setRefocus] = useState(0);
   const [query, setQuery] = useState("");
   const single = ws.agents.length === 1 ? ws.agents[0] : null;
   const resume = single ? resumeCommand(single.provider, single.sessionId) : null;
@@ -518,7 +531,14 @@ export function RowMenu(props: {
     }
     const save = () => {
       const title = draft.trim();
-      if (title) void act(() => paseo.workspaces.ref(ws.id).setTitle(title), "Renamed", "Could not rename.");
+      if (!title) return;
+      // Saving the name as it was would say Renamed while nothing changed.
+      if (title === ws.title.trim()) {
+        toast.show("Type a new name first, then press Save.", { variant: "info" });
+        setRefocus((n) => n + 1);
+        return;
+      }
+      void act(() => paseo.workspaces.ref(ws.id).setTitle(title), "Renamed", "Could not rename.");
     };
     return (
       <>
@@ -531,6 +551,7 @@ export function RowMenu(props: {
           }}
           label="Workspace title"
           selectAll
+          focusKey={refocus}
           onSubmit={save}
         />
         {item("save", "Check", "Save", save)}
