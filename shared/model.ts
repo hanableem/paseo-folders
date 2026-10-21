@@ -142,6 +142,17 @@ export const pinWorkspaceRpc = defineRpc({
   output: z.union([z.object({ ok: z.literal(true) }), z.object({ ok: z.literal(false), reason: z.string() })]),
 });
 
+/**
+ * Renames a conversation, as Rename on its tab does. Paseo keeps a workspace's title apart from
+ * its conversations' titles, and a tab shows its conversation's, so renaming a workspace that holds
+ * one conversation renames the conversation too. Paseo's plugin API cannot, so the host does it.
+ */
+export const renameConversationRpc = defineRpc({
+  name: "conversation.rename",
+  input: z.object({ agentId: z.string().min(1), title: z.string().trim().min(1).max(200) }),
+  output: z.union([z.object({ ok: z.literal(true) }), z.object({ ok: z.literal(false), reason: z.string() })]),
+});
+
 export interface ListedAgent {
   id: string;
   title: string;

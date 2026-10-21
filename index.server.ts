@@ -6,9 +6,11 @@ import {
   pinWorkspaceRpc,
   readFoldersRpc,
   readSuggestionsRpc,
+  renameConversationRpc,
 } from "./shared/model";
 import { moveConversation } from "./server/move";
 import { pinWorkspace } from "./server/pin";
+import { renameConversation } from "./server/rename";
 import { readSuggestions } from "./server/suggestions";
 
 export default function contribute(server: PluginServerContext) {
@@ -21,5 +23,6 @@ export default function contribute(server: PluginServerContext) {
   });
   server.handle(moveConversationRpc, (input, { paseo }) => moveConversation(input, paseo));
   server.handle(pinWorkspaceRpc, pinWorkspace);
+  server.handle(renameConversationRpc, renameConversation);
   return () => {};
 }

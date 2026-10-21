@@ -24,6 +24,7 @@ import {
   mergeTargets,
   moveWorkspace,
   pinWorkspaceRpc,
+  renameConversationRpc,
   renameFolder,
   resumeCommand,
   UNSORTED_ID,
@@ -435,6 +436,7 @@ export function RowMenu(props: {
   const { ws, meta, theme, folders, mover, onClose } = props;
   const paseo = usePaseo();
   const pin = useRpc(pinWorkspaceRpc);
+  const renameTab = useRpc(renameConversationRpc);
   const toast = useToast();
   const sub = useSubmenu<Page>();
   const [draft, setDraft] = useState(ws.title);
@@ -479,6 +481,17 @@ export function RowMenu(props: {
     onClose();
     if (mover) void mover.merge(ws, target);
   };
+
+  // Paseo keeps a workspace's title apart from its conversations' titles, and a tab shows its
+  // conversation's, so a workspace holding one conversation renames that conversation as well.
+  const changes = (title: string) => title !== ws.title.trim() || (single !== null && single.title.trim() !== title);
+  async function retitle(title: string) {
+    if (title !== ws.title.trim()) await paseo.workspaces.ref(ws.id).setTitle(title);
+    if (single && single.title.trim() !== title) {
+      const result = await renameTab({ agentId: single.id, title });
+      if (!result.ok) throw new Error(result.reason);
+    }
+  }
 
   function page(key: Page): ReactNode {
     if (key === "merge") {
@@ -533,12 +546,12 @@ export function RowMenu(props: {
       const title = draft.trim();
       if (!title) return;
       // Saving the name as it was would say Renamed while nothing changed.
-      if (title === ws.title.trim()) {
+      if (!changes(title)) {
         toast.show("Type a new name first, then press Save.", { variant: "info" });
         setRefocus((n) => n + 1);
         return;
       }
-      void act(() => paseo.workspaces.ref(ws.id).setTitle(title), "Renamed", "Could not rename.");
+      void act(() => retitle(title), "Renamed", "Could not rename.");
     };
     return (
       <>
