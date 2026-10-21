@@ -67,6 +67,11 @@ const FRESH_MS = 30 * 60_000;
 const OWN_PLUGIN_ID = "paseo-folders";
 /** On the web a fixed layer follows the pointer past the sidebar's edge. */
 const layer = (Platform.OS === "web" ? "fixed" : "absolute") as "absolute";
+/** A drag held this near the top or bottom of the folders, or just past it, scrolls them, by up to `EDGE_STEP` pixels a frame. */
+const EDGE_ZONE = 24;
+const EDGE_STEP = 10;
+/** The folders' scroll area, read from the page to tell when a drag is near its edges. */
+const SCROLL_NODE_ID = "paseo-folders-scroll";
 
 const sameTarget = (a: DropTarget | null, b: DropTarget | null) => a?.kind === b?.kind && a?.id === b?.id;
 
@@ -81,8 +86,9 @@ type Dragged = DragSubject | { kind: "folder"; folder: Folder };
 const AT_END = "";
 
 /**
- * Folders of workspaces, like Paseo's own list but grouped. One folder is open
- * at a time so every folder stays on screen as a drop target. With a mouse:
+ * Folders of workspaces, like Paseo's own list but grouped; each opens and closes
+ * on its own. A drag held near the top or bottom of the folders scrolls them, so
+ * rows out of view still take drops. With a mouse:
  * drag a workspace onto a folder to file it there, onto the top or bottom edge of
  * another workspace to put it there (the folder then keeps that order, with new
  * workspaces on top), or onto the middle of another workspace to move its
@@ -105,7 +111,8 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
   const closeMenu = useCallback(() => setMenu(null), []);
   const [expanded, setExpanded] = useState(true);
   const [recentOpen, setRecentOpen] = useState(true);
-  const [openFolder, setOpenFolder] = useState<string | null>(null);
+  /** The folders opened by hand; until one is opened or closed, Unsorted shows open when it has workspaces. */
+  const [openFolders, setOpenFolders] = useState<ReadonlySet<string> | null>(null);
   const [showAll, setShowAll] = useState<ReadonlySet<string>>(new Set());
   /** Workspaces opened to list their conversations. */
   const [opened, setOpened] = useState<ReadonlySet<string>>(new Set());
@@ -143,6 +150,23 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
   const frozen = useRef<Map<string, ListedWorkspace[]> | null>(null);
   const frozenRecent = useRef<ListedWorkspace[] | null>(null);
   const ghost = useRef<((at: MenuPoint) => void) | null>(null);
+  const scroller = useRef<ScrollView | null>(null);
+  /** How far the folders are scrolled, how tall they are, and how tall their scroll area is. */
+  const scrolled = useRef({ y: 0, content: 0, view: 0 });
+  /** Where the pointer of a drag is, and the scroll that holding it near an edge keeps going. */
+  const edgeScroll = useRef<{ x: number; y: number; step: number; frame: number | null }>({
+    x: 0,
+    y: 0,
+    step: 0,
+    frame: null,
+  });
+  useEffect(
+    () => () => {
+      const { frame } = edgeScroll.current;
+      if (frame !== null) cancelAnimationFrame(frame);
+    },
+    [],
+  );
   const ready = folders.status === "ready" ? folders : null;
   const orderKey = ready ? folderOrder(ready.doc).map((f) => f.id).join("\n") : "";
   useEffect(() => setPlaced(null), [orderKey]);
@@ -204,7 +228,15 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
   const web = Platform.OS === "web";
   const unsortedCount = lists.get(UNSORTED_ID)?.length ?? 0;
   // With nothing chosen, show Unsorted open so new workspaces are easy to file.
-  const shownFolder = openFolder ?? (unsortedCount > 0 ? UNSORTED_ID : null);
+  const shownOpen: ReadonlySet<string> = openFolders ?? new Set(unsortedCount > 0 ? [UNSORTED_ID] : []);
+  /** Opens or closes one folder and leaves the others as they are shown. */
+  const showFolder = (id: string, open: boolean) =>
+    setOpenFolders((prev) => {
+      const next = new Set(prev ?? shownOpen);
+      if (open) next.add(id);
+      else next.delete(id);
+      return next;
+    });
 
   const openWorkspace = (ws: Pick<ListedWorkspace, "id" | "title">) => {
     showing.expect(ws.id);
@@ -231,7 +263,7 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
     const ws = workspaces.find((w) => w.id === reveal);
     if (!ws) return;
     setReveal(null);
-    setOpenFolder(workspaceFolderOf(ready.doc, ws));
+    showFolder(workspaceFolderOf(ready.doc, ws), true);
     setOpened((prev) => (prev.has(ws.id) ? prev : new Set(prev).add(ws.id)));
   }, [reveal, ready, workspaces]);
 
@@ -260,7 +292,7 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
       const at = new Date().toISOString();
       freshWorkspaces.set(created.id, at);
       setFresh(new Map(freshWorkspaces));
-      setOpenFolder(folderId);
+      showFolder(folderId, true);
       const saved = await ready.update((d) => markAutoTitle(moveWorkspace(d, created.id, folderId), created.id, at));
       if (!saved) toast.error(`Made the workspace, but could not file it in ${folderName}.`);
       openWorkspace({ id: created.id, title: "New workspace" });
@@ -359,7 +391,7 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
       void moveTo(subject.ws, action.folderId, nameOf(action.folderId));
     } else if (action.kind === "split") {
       if (subject.kind !== "conversation") return;
-      setOpenFolder(action.folderId);
+      showFolder(action.folderId, true);
       void mover.split(subject.ws, subject.agent, action.folderId);
     } else {
       const target = workspaces.find((w) => w.id === action.workspaceId);
@@ -368,9 +400,47 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
     }
   }
 
+  /** Keeps the folders scrolling while a drag is held near their top or bottom edge, or just past it. */
+  const scrollNearEdge = (x: number, y: number) => {
+    const edge = edgeScroll.current;
+    edge.x = x;
+    edge.y = y;
+    edge.step = 0;
+    const area = rectOfId(SCROLL_NODE_ID);
+    const { content, view } = scrolled.current;
+    if (!area || content <= view || x < area.x || x > area.x + area.width) return;
+    // Faster nearer the edge; a whole pixel at least, as the page scrolls no less.
+    const step = (inside: number) => Math.ceil(EDGE_STEP * Math.min(1, (EDGE_ZONE - inside) / EDGE_ZONE));
+    const fromTop = y - area.y;
+    const fromBottom = area.y + area.height - y;
+    if (Math.abs(fromTop) < EDGE_ZONE) edge.step = -step(fromTop);
+    else if (Math.abs(fromBottom) < EDGE_ZONE) edge.step = step(fromBottom);
+    if (edge.step !== 0 && edge.frame === null) edge.frame = requestAnimationFrame(scrollFrame);
+  };
+  const scrollFrame = () => {
+    const edge = edgeScroll.current;
+    const { y, content, view } = scrolled.current;
+    const next = Math.max(0, Math.min(content - view, y + edge.step));
+    if (!dragging.current || next === y) {
+      edge.frame = null;
+      return;
+    }
+    scrolled.current.y = next;
+    scroller.current?.scrollTo({ y: next, animated: false });
+    edge.frame = requestAnimationFrame(scrollFrame);
+  };
+  const stopScrolling = () => {
+    const edge = edgeScroll.current;
+    if (edge.frame !== null) cancelAnimationFrame(edge.frame);
+    edge.frame = null;
+    edge.step = 0;
+  };
+
   const dragApi: DragApi = {
     start(subject, x, y) {
       dragging.current = subject;
+      edgeScroll.current.x = x;
+      edgeScroll.current.y = y;
       frozen.current = byFolder;
       frozenRecent.current = recent;
       setMenu(null);
@@ -387,6 +457,7 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
     },
     move(x, y) {
       ghost.current?.({ x, y });
+      scrollNearEdge(x, y);
       const subject = dragging.current;
       if (subject?.kind === "folder") {
         const index = reorderAt(subject.folder.id, y);
@@ -397,6 +468,7 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
       setHover((h) => (sameHover(h, at) ? h : at));
     },
     end(x, y) {
+      stopScrolling();
       const subject = dragging.current;
       dragging.current = null;
       frozen.current = null;
@@ -507,7 +579,23 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
     <View ref={container} collapsable={false}>
       {header}
       {/* Paseo's sidebar header does not scroll, so the folders scroll on their own when tall. */}
-      <ScrollView style={{ maxHeight: Math.max(240, windowHeight * 0.6) }}>
+      <ScrollView
+        ref={scroller}
+        nativeID={SCROLL_NODE_ID}
+        style={{ maxHeight: Math.max(240, windowHeight * 0.6) }}
+        scrollEventThrottle={16}
+        onScroll={(event) => {
+          scrolled.current.y = event.nativeEvent.contentOffset.y;
+          // Rows moved under a held drag, by the wheel or near an edge.
+          if (dragging.current) dragRef.current.move(edgeScroll.current.x, edgeScroll.current.y);
+        }}
+        onLayout={(event) => {
+          scrolled.current.view = event.nativeEvent.layout.height;
+        }}
+        onContentSizeChange={(_width, height) => {
+          scrolled.current.content = height;
+        }}
+      >
       {recentShown.length > 0 ? (
         <RecentItem
           open={recentOpen}
@@ -537,7 +625,7 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
         : null}
       {groups.map((folder) => {
         const list = lists.get(folder.id) ?? [];
-        const open = shownFolder === folder.id;
+        const open = shownOpen.has(folder.id);
         const all = showAll.has(folder.id);
         const shown = open ? (all ? list : list.slice(0, MAX_ROWS_PER_FOLDER)) : [];
         const line = placing?.folderId === folder.id ? placing.before : undefined;
@@ -564,7 +652,7 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
               lineAbove={lineAbove === folder.id}
               creating={creating}
               dragRef={dragRef}
-              onToggle={() => setOpenFolder(open ? "" : folder.id)}
+              onToggle={() => showFolder(folder.id, !open)}
               onCreate={folder.id === UNSORTED_ID ? undefined : () => void createIn(folder.id, folder.name)}
               onMenu={(at) => setMenu({ kind: "folder", folderId: folder.id, at })}
             />
