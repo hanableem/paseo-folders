@@ -24,10 +24,12 @@ import {
   mergeTargets,
   moveWorkspace,
   pinWorkspaceRpc,
+  removeFromRecent,
   renameConversationRpc,
   renameFolder,
   resumeCommand,
   UNSORTED_ID,
+  withoutRecentRemoval,
   workspaceFolderOf,
 } from "../shared/model";
 import type { ReadyFolders, WorkspaceMeta } from "./data";
@@ -430,6 +432,8 @@ export function RowMenu(props: {
   workspaces?: readonly ListedWorkspace[];
   /** Leave out to hide merging and splitting. */
   mover?: Mover;
+  /** It is listed under Recent, so it can be removed from there. */
+  inRecent?: boolean;
   onClose(): void;
   onArchived?(workspaceId: string): void;
 }) {
@@ -594,11 +598,30 @@ export function RowMenu(props: {
           async () => {
             const result = await pin({ workspaceId: ws.id, pinned: !pinned });
             if (!result.ok) throw new Error(result.reason);
+            // Pinned, it is back in Recent for good, not only until it is unpinned.
+            if (!pinned) await folders.update((d) => withoutRecentRemoval(d, [ws.id]));
           },
           pinned ? "Unpinned" : "Pinned to Recent",
           pinned ? "Could not unpin." : "Could not pin.",
         ),
       )}
+      {props.inRecent
+        ? action("unrecent", "ListX", "Remove from Recent", () =>
+            void act(
+              async () => {
+                if (pinned) {
+                  const result = await pin({ workspaceId: ws.id, pinned: false });
+                  if (!result.ok) throw new Error(result.reason);
+                }
+                if (!(await folders.update((d) => removeFromRecent(d, ws.id, new Date().toISOString())))) {
+                  throw new Error("not saved");
+                }
+              },
+              "Removed from Recent",
+              "Could not remove it from Recent.",
+            ),
+          )
+        : null}
       <MenuSeparator theme={theme} />
       {opener("move", "FolderInput", "Move to folder")}
       {mover && ws.agents.length > 0 && (props.workspaces?.length ?? 0) > 1

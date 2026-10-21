@@ -33,6 +33,7 @@ import {
   placeWorkspace,
   RECENT_PART,
   recentWorkspaces,
+  removeFromRecent,
   reorderTarget,
   rowEdge,
   renameAgent,
@@ -44,6 +45,7 @@ import {
   UNSORTED_ID,
   workspaceBucket,
   withoutAutoTitle,
+  withoutRecentRemoval,
   workspaceFolderOf,
 } from "../shared/model.ts";
 
@@ -509,7 +511,7 @@ test("Recent lists pinned workspaces first, latest pin on top, then the last use
     new Map(),
   );
   const pins: Record<string, string> = { w1: day(20), w2: day(21) };
-  const ids = (limit: number) => recentWorkspaces(listed, (id) => pins[id] ?? "", limit).map((ws) => ws.id);
+  const ids = (limit: number) => recentWorkspaces(listed, (id) => pins[id] ?? "", { limit }).map((ws) => ws.id);
   assert.deepEqual(ids(4), ["w2", "w1", "w6", "w5"]);
   assert.deepEqual(ids(8), ["w2", "w1", "w6", "w5", "w4", "w3"]);
   // Pinned workspaces stay even past the limit.
@@ -521,9 +523,34 @@ test("Recent keeps a workspace with something to see however long ago it was use
   const unread = { ...agent("a1", "w1", day(1)), bucket: "attention" as const };
   const asking = { ...agent("a2", "w2", day(2)), bucket: "needs_input" as const };
   const listed = groupWorkspaces([unread, asking, agent("a3", "w3", day(3)), agent("a4", "w4", day(4))], new Map());
-  const ids = (limit: number) => recentWorkspaces(listed, () => "", limit).map((ws) => ws.id);
+  const ids = (limit: number) => recentWorkspaces(listed, () => "", { limit }).map((ws) => ws.id);
   // In order of use, with the newest of the rest filling what room is left.
   assert.deepEqual(ids(3), ["w4", "w2", "w1"]);
   assert.deepEqual(ids(2), ["w2", "w1"]);
   assert.deepEqual(ids(8), ["w4", "w3", "w2", "w1"]);
+});
+
+test("a workspace removed from Recent stays out, whatever it has to see, until the person writes in it again", () => {
+  const day = (d: number) => `2026-01-${String(d).padStart(2, "0")}T00:00:00Z`;
+  const wrote = (a: ListedAgent, d: number): ListedAgent => ({ ...a, lastMessageAt: day(d) });
+  const unread = { ...wrote(agent("a1", "w1", day(5)), 5), bucket: "attention" as const };
+  // Moved: Paseo no longer knows when the person last wrote in it, only that it changed.
+  const moved = agent("a4", "w4", day(9));
+  const listed = groupWorkspaces([unread, wrote(agent("a2", "w2", day(4)), 4), wrote(agent("a3", "w3", day(3)), 3), moved], new Map());
+  const ids = (removed: Record<string, string>, pins: Record<string, string> = {}) =>
+    recentWorkspaces(listed, (id) => pins[id] ?? "", { removedAt: (id) => removed[id] ?? "" }).map((ws) => ws.id);
+  assert.deepEqual(ids({}), ["w4", "w1", "w2", "w3"]);
+  assert.deepEqual(ids({ w1: day(6), w2: day(6) }), ["w4", "w3"], "a reply not yet read does not keep it");
+  assert.deepEqual(ids({ w2: day(3) }), ["w4", "w1", "w2", "w3"], "written in since");
+  assert.deepEqual(ids({ w4: day(1) }), ["w1", "w2", "w3"], "a later update is no message");
+  assert.deepEqual(ids({ w1: day(6) }, { w1: day(7) }), ["w1", "w4", "w2", "w3"], "pinned");
+});
+
+test("the document keeps a workspace removed from Recent until it is pinned or archived", () => {
+  const doc = FoldersDocumentSchema.parse({});
+  assert.deepEqual(doc.removedFromRecent, {});
+  const removed = removeFromRecent(doc, "w1", "2026-01-06T00:00:00Z");
+  assert.deepEqual(removed.removedFromRecent, { w1: "2026-01-06T00:00:00Z" });
+  assert.deepEqual(withoutRecentRemoval(removed, ["w1", "w2"]).removedFromRecent, {});
+  assert.equal(withoutRecentRemoval(doc, ["w1"]), doc, "nothing to forget");
 });

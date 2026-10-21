@@ -47,6 +47,7 @@ import {
   type StatusBucket,
   UNSORTED_ID,
   withoutAutoTitle,
+  withoutRecentRemoval,
   workspaceFolderOf,
 } from "../shared/model";
 import { useArchiveAbandoned, useAutoImport, useAutoTitle, useDirectory, useFolders } from "./data";
@@ -116,6 +117,8 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
   const [showAll, setShowAll] = useState<ReadonlySet<string>>(new Set());
   /** Workspaces opened to list their conversations. */
   const [opened, setOpened] = useState<ReadonlySet<string>>(new Set());
+  /** Workspaces opened under Recent to list their conversations, apart from their rows in folders. */
+  const [openedInRecent, setOpenedInRecent] = useState<ReadonlySet<string>>(new Set());
   const [drag, setDrag] = useState<{
     subject: Dragged;
     at: MenuPoint;
@@ -218,9 +221,13 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
     return map;
   }, [doc, workspaces]);
   const lists = (drag && frozen.current) || byFolder;
+  const savedDoc = ready?.doc;
   const recent = useMemo(
-    () => recentWorkspaces(workspaces, (id) => workspaceMeta.get(id)?.pinnedAt ?? ""),
-    [workspaces, workspaceMeta],
+    () =>
+      recentWorkspaces(workspaces, (id) => workspaceMeta.get(id)?.pinnedAt ?? "", {
+        removedAt: (id) => savedDoc?.removedFromRecent[id] ?? "",
+      }),
+    [workspaces, workspaceMeta, savedDoc],
   );
   const recentShown = (drag && frozenRecent.current) || recent;
 
@@ -267,13 +274,14 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
     setOpened((prev) => (prev.has(ws.id) ? prev : new Set(prev).add(ws.id)));
   }, [reveal, ready, workspaces]);
 
-  const toggleOpened = (id: string) =>
-    setOpened((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+  const toggle = (id: string) => (prev: ReadonlySet<string>) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    return next;
+  };
+  const toggleOpened = (id: string) => setOpened(toggle(id));
+  const toggleOpenedInRecent = (id: string) => setOpenedInRecent(toggle(id));
 
   /** Makes an empty workspace in the folder's usual project, files it there and opens it. */
   async function createIn(folderId: string, folderName: string) {
@@ -326,7 +334,7 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
     const ws = [...lists.values()].flat().find((w) => w.id === target.id);
     const listing = Boolean(ws && ws.agents.length > 1 && opened.has(ws.id));
     const part = dropNodePart(nodeId);
-    if (part === RECENT_PART) return { target, edge: null };
+    if (part === RECENT_PART || part?.startsWith(`${RECENT_PART}/`)) return { target, edge: null };
     if (part === null) return { target, edge: listing && edge === "below" ? null : edge };
     const last = ws?.agents[ws.agents.length - 1]?.id;
     return { target, edge: edge === "below" && part === last ? "below" : null };
@@ -606,22 +614,43 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
         />
       ) : null}
       {recentOpen
-        ? recentShown.map((ws) => (
-            <WorkspaceItem
-              key={`recent-${ws.id}`}
-              ws={ws}
-              theme={theme}
-              active={showing.id === ws.id}
-              lifted={drag?.subject.kind === "workspace" && drag.subject.ws.id === ws.id}
-              dropTarget={dropOn?.kind === "workspace" && dropOn.id === ws.id}
-              listing={false}
-              recent
-              pinned={Boolean(workspaceMeta.get(ws.id)?.pinnedAt)}
-              dragRef={dragRef}
-              onOpen={() => openWorkspace(ws)}
-              onMenu={(at) => openMenu(ws, at)}
-            />
-          ))
+        ? recentShown.map((ws) => {
+            const target = dropOn?.kind === "workspace" && dropOn.id === ws.id;
+            const listing = ws.agents.length > 1 && openedInRecent.has(ws.id);
+            return (
+              <Fragment key={`recent-${ws.id}`}>
+                <WorkspaceItem
+                  ws={ws}
+                  theme={theme}
+                  active={showing.id === ws.id}
+                  lifted={drag?.subject.kind === "workspace" && drag.subject.ws.id === ws.id}
+                  dropTarget={target}
+                  listing={listing}
+                  recent
+                  pinned={Boolean(workspaceMeta.get(ws.id)?.pinnedAt)}
+                  dragRef={dragRef}
+                  onOpen={() => openWorkspace(ws)}
+                  onToggle={() => toggleOpenedInRecent(ws.id)}
+                  onMenu={(at) => openMenu(ws, at)}
+                />
+                {listing
+                  ? ws.agents.map((agent) => (
+                      <ConversationItem
+                        key={agent.id}
+                        ws={ws}
+                        agent={agent}
+                        theme={theme}
+                        lifted={drag?.subject.kind === "conversation" && drag.subject.agent.id === agent.id}
+                        dropTarget={target}
+                        recent
+                        dragRef={dragRef}
+                        onOpen={() => openConversation(ws, agent)}
+                      />
+                    ))
+                  : null}
+              </Fragment>
+            );
+          })
         : null}
       {groups.map((folder) => {
         const list = lists.get(folder.id) ?? [];
@@ -739,10 +768,11 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
           folders={ready}
           workspaces={workspaces}
           mover={mover}
+          inRecent={recent.some((ws) => ws.id === menu.ws.id)}
           onClose={closeMenu}
           onArchived={(id) => {
             if (freshWorkspaces.delete(id)) setFresh(new Map(freshWorkspaces));
-            void ready.update((d) => withoutAutoTitle(d, [id]));
+            void ready.update((d) => withoutRecentRemoval(withoutAutoTitle(d, [id]), [id]));
           }}
         />
       ) : null}
@@ -1078,8 +1108,8 @@ function FolderItem(props: {
 
 /**
  * A workspace row with Paseo-style status, its title, and how many conversations it holds.
- * Under Recent it leaves out the count and shows a pin when pinned; dropped on, the whole row
- * merges, since Recent keeps its own order.
+ * Under Recent it also shows a pin when pinned; dropped on, the whole row merges, since Recent
+ * keeps its own order.
  */
 function WorkspaceItem(props: {
   ws: ListedWorkspace;
@@ -1189,6 +1219,8 @@ function ConversationItem(props: {
   lifted: boolean;
   /** A drag is over this conversation's workspace. */
   dropTarget: boolean;
+  /** Under its workspace's row in Recent, which takes merges but places nothing beside it. */
+  recent?: boolean;
   dragRef: { current: DragApi };
   onOpen(): void;
 }) {
@@ -1210,7 +1242,11 @@ function ConversationItem(props: {
     backgroundColor: rowBackground(theme, { dropTarget: props.dropTarget, pressed: state.pressed, hovered }),
   });
   return (
-    <View nativeID={dropNodeId({ kind: "workspace", id: ws.id }, agent.id)} {...panHandlers} collapsable={false}>
+    <View
+      nativeID={dropNodeId({ kind: "workspace", id: ws.id }, props.recent ? `${RECENT_PART}/${agent.id}` : agent.id)}
+      {...panHandlers}
+      collapsable={false}
+    >
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={agent.title}

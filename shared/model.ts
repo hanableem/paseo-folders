@@ -43,6 +43,11 @@ export const FoldersDocumentSchema = z.object({
    * untitled and take their first conversation's title.
    */
   autoTitle: z.record(z.string(), z.string()).default({}),
+  /**
+   * Workspace ID -> ISO time the user removed it from Recent. It stays out of Recent until the
+   * person writes in it again or pins it.
+   */
+  removedFromRecent: z.record(z.string(), z.string()).default({}),
   /** The user's name for Unsorted. Empty means "Unsorted". */
   unsortedName: z.string().max(60).default(""),
   /** How many folders come before Unsorted in the display order. */
@@ -166,6 +171,8 @@ export interface ListedAgent {
   sessionId: string;
   /** ISO time used for sorting: last user message, else last update. */
   activityAt: string;
+  /** ISO time of the person's last message; empty when Paseo does not know it, as after a move. */
+  lastMessageAt?: string;
 }
 
 /** Paseo's sidebar status buckets, most urgent first. */
@@ -247,15 +254,26 @@ export const RECENT_LIMIT = 8;
  * The workspaces under Recent: those pinned in Paseo first, the latest pin on top as in
  * Paseo's own Pinned group, then the others, last used first. Pinned workspaces and those
  * with something to see (a reply not yet read, a question, an error or work in progress)
- * always stay; the rest fill the list up to `limit`.
+ * always stay; the rest fill the list up to `limit`. A workspace the person removed from
+ * Recent stays out, whatever it has to see, until they write in it again.
  */
 export function recentWorkspaces<T extends ListedWorkspace>(
   workspaces: readonly T[],
   pinnedAt: (workspaceId: string) => string,
-  limit = RECENT_LIMIT,
+  options: {
+    limit?: number;
+    /** When the person removed a workspace from Recent; empty if they did not. */
+    removedAt?: (workspaceId: string) => string;
+  } = {},
 ): T[] {
+  const { limit = RECENT_LIMIT, removedAt = () => "" } = options;
+  // Only what the person writes brings it back, not a reply or another update.
+  const removed = (ws: T) => {
+    const at = removedAt(ws.id);
+    return at !== "" && !ws.agents.some((a) => (a.lastMessageAt ?? "") > at);
+  };
   const pinned = workspaces.filter((ws) => pinnedAt(ws.id)).sort((a, b) => pinnedAt(b.id).localeCompare(pinnedAt(a.id)));
-  const rest = workspaces.filter((ws) => !pinnedAt(ws.id)).sort(byRecentActivity);
+  const rest = workspaces.filter((ws) => !pinnedAt(ws.id) && !removed(ws)).sort(byRecentActivity);
   const kept = new Set(rest.filter((ws) => workspaceBucket(ws) !== "done").map((ws) => ws.id));
   let room = limit - pinned.length - kept.size;
   for (const ws of rest) {
@@ -312,6 +330,19 @@ export function withoutAutoTitle(doc: FoldersDocument, workspaceIds: readonly st
   const autoTitle = { ...doc.autoTitle };
   for (const id of workspaceIds) delete autoTitle[id];
   return { ...doc, autoTitle };
+}
+
+/** Takes a workspace out of Recent from `at` on, until the person writes in it again. */
+export function removeFromRecent(doc: FoldersDocument, workspaceId: string, at: string): FoldersDocument {
+  return { ...doc, removedFromRecent: { ...doc.removedFromRecent, [workspaceId]: at } };
+}
+
+/** Forgets that workspaces were removed from Recent, as when one is pinned or archived. */
+export function withoutRecentRemoval(doc: FoldersDocument, workspaceIds: readonly string[]): FoldersDocument {
+  if (!workspaceIds.some((id) => id in doc.removedFromRecent)) return doc;
+  const removedFromRecent = { ...doc.removedFromRecent };
+  for (const id of workspaceIds) delete removedFromRecent[id];
+  return { ...doc, removedFromRecent };
 }
 
 /** The most frequent non-empty value; ties go to the one seen first. */

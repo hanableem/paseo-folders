@@ -75,6 +75,7 @@ export async function fetchDirectory(paseo: PaseoApi): Promise<Directory> {
         }),
         sessionId: agent.persistence?.sessionId ?? "",
         activityAt: agent.lastUserMessageAt ?? agent.updatedAt,
+        lastMessageAt: agent.lastUserMessageAt ?? "",
       });
     }
     const next = result.pageInfo.nextCursor;
@@ -177,6 +178,7 @@ function toListed(agent: AgentPayload, workspaceName: string): ListedAgent {
     }),
     sessionId: agent.persistence?.sessionId ?? "",
     activityAt: agent.lastUserMessageAt ?? agent.updatedAt,
+    lastMessageAt: agent.lastUserMessageAt ?? "",
   };
 }
 
