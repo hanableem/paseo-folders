@@ -240,6 +240,7 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
       recentWorkspaces(workspaces, (id) => workspaceMeta.get(id)?.pinnedAt ?? "", {
         removedAt: (id) => doc?.removedFromRecent[id] ?? "",
         order: doc?.recentOrder,
+        held: { at: doc?.recentHeldAt ?? "", ids: doc?.recentHeld ?? [] },
       }),
     [workspaces, workspaceMeta, doc],
   );
@@ -829,7 +830,7 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
           folders={ready}
           workspaces={workspaces}
           mover={mover}
-          inRecent={recent.some((ws) => ws.id === menu.ws.id)}
+          recent={recent.map((ws) => ws.id)}
           recentOrdered={recent.some((ws) => ready.doc.recentOrder.includes(ws.id))}
           onClose={closeMenu}
           onArchived={(id) => {

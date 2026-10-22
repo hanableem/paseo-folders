@@ -53,6 +53,13 @@ export const FoldersDocumentSchema = z.object({
    * order: pinned first, then by last use.
    */
   recentOrder: z.array(z.string()).default([]),
+  /**
+   * The workspaces Recent listed when the person last removed one from it, and when that was.
+   * From then on Recent takes in only these and the workspaces the person writes in, so no
+   * older one fills the place left. Empty before the first removal.
+   */
+  recentHeld: z.array(z.string()).default([]),
+  recentHeldAt: z.string().default(""),
   /** The user's name for Unsorted. Empty means "Unsorted". */
   unsortedName: z.string().max(60).default(""),
   /** How many folders come before Unsorted in the display order. */
@@ -260,8 +267,10 @@ export const RECENT_LIMIT = 8;
  * Paseo's own Pinned group, then the others, last used first. Pinned workspaces and those
  * with something to see (a reply not yet read, a question, an error or work in progress)
  * always stay; the rest fill the list up to `limit`. A workspace the person removed from
- * Recent stays out, whatever it has to see, until they write in it again. Once the person
- * has dragged Recent into an `order`, it keeps that order, as a folder does. Of workspaces
+ * Recent stays out, whatever it has to see, until they write in it again, and no older
+ * workspace takes its place: once one has been removed, Recent takes in only the workspaces
+ * it `held` then and those the person writes in, besides any with something to see. Once the
+ * person has dragged Recent into an `order`, it keeps that order, as a folder does. Of workspaces
  * the order does not hold yet, those pinned or used since come on top; others, which only
  * fill a place left empty, go at the bottom.
  */
@@ -274,17 +283,24 @@ export function recentWorkspaces<T extends ListedWorkspace>(
     removedAt?: (workspaceId: string) => string;
     /** The order the person dragged Recent into; empty for Recent's own. */
     order?: readonly string[];
+    /** What Recent listed when the person last removed a workspace from it, and when; `at` is empty before that. */
+    held?: { at: string; ids: readonly string[] };
   } = {},
 ): T[] {
-  const { limit = RECENT_LIMIT, removedAt = () => "", order = [] } = options;
+  const { limit = RECENT_LIMIT, removedAt = () => "", order = [], held = { at: "", ids: [] } } = options;
   // Only what the person writes brings it back, not a reply or another update.
   const removed = (ws: T) => {
     const at = removedAt(ws.id);
     return at !== "" && !ws.agents.some((a) => (a.lastMessageAt ?? "") > at);
   };
+  const heldIds = new Set(held.ids);
+  const inHand = (ws: T) =>
+    held.at === "" || heldIds.has(ws.id) || ws.agents.some((a) => (a.lastMessageAt ?? "") > held.at);
   const usedAt = (ws: T) => ws.activityAt;
   const pinned = workspaces.filter((ws) => pinnedAt(ws.id)).sort((a, b) => pinnedAt(b.id).localeCompare(pinnedAt(a.id)));
-  const rest = workspaces.filter((ws) => !pinnedAt(ws.id) && !removed(ws)).sort(byRecentActivity);
+  const rest = workspaces
+    .filter((ws) => !pinnedAt(ws.id) && !removed(ws) && (inHand(ws) || workspaceBucket(ws) !== "done"))
+    .sort(byRecentActivity);
   const kept = new Set(rest.filter((ws) => workspaceBucket(ws) !== "done").map((ws) => ws.id));
   let room = limit - pinned.length - kept.size;
   for (const ws of rest) {
@@ -350,10 +366,30 @@ export function withoutAutoTitle(doc: FoldersDocument, workspaceIds: readonly st
   return { ...doc, autoTitle };
 }
 
-/** Takes a workspace out of Recent from `at` on, until the person writes in it again; it comes back on top. */
-export function removeFromRecent(doc: FoldersDocument, workspaceId: string, at: string): FoldersDocument {
+/**
+ * Takes a workspace out of Recent from `at` on, until the person writes in it again; it comes back
+ * on top. `shown` is what Recent lists, which it holds on to without that workspace, so no older
+ * one comes in to take its place.
+ */
+export function removeFromRecent(
+  doc: FoldersDocument,
+  workspaceId: string,
+  at: string,
+  shown: readonly string[],
+): FoldersDocument {
   const out = withoutRecentPlace(doc, [workspaceId]);
-  return { ...out, removedFromRecent: { ...out.removedFromRecent, [workspaceId]: at } };
+  return {
+    ...out,
+    removedFromRecent: { ...out.removedFromRecent, [workspaceId]: at },
+    recentHeld: shown.filter((id) => id !== workspaceId),
+    recentHeldAt: at,
+  };
+}
+
+/** Adds a workspace to those Recent holds on to, as one pinned there, so that it stays once unpinned. */
+export function holdInRecent(doc: FoldersDocument, workspaceId: string): FoldersDocument {
+  if (doc.recentHeldAt === "" || doc.recentHeld.includes(workspaceId)) return doc;
+  return { ...doc, recentHeld: [...doc.recentHeld, workspaceId] };
 }
 
 /** Forgets that workspaces were removed from Recent, as when one is pinned or archived. */
@@ -379,7 +415,7 @@ export function resetRecentOrder(doc: FoldersDocument): FoldersDocument {
  * Puts a workspace in Recent just above workspace `before`, or at the bottom when `before`
  * is null. `shown` is Recent in display order, which becomes its saved order with the
  * workspace in its new place, so the list stays as the user sees it. A workspace removed
- * from Recent is let back in.
+ * from Recent is let back in, and held on to.
  */
 export function placeInRecent(
   doc: FoldersDocument,
@@ -389,7 +425,7 @@ export function placeInRecent(
 ): FoldersDocument {
   const order = insertBefore(shown, workspaceId, before);
   if (!order) return doc;
-  return withoutRecentRemoval({ ...doc, recentOrder: order }, [workspaceId]);
+  return holdInRecent(withoutRecentRemoval({ ...doc, recentOrder: order }, [workspaceId]), workspaceId);
 }
 
 /** The most frequent non-empty value; ties go to the one seen first. */

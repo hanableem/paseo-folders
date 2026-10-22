@@ -13,10 +13,13 @@ import {
   folderOrder,
   FoldersDocumentSchema,
   groupWorkspaces,
+  holdInRecent,
   inFolderOrder,
   insertBefore,
   keepFolder,
+  type FoldersDocument,
   type ListedAgent,
+  type ListedWorkspace,
   markAutoTitle,
   matchesWorkspace,
   mergeSuggestions,
@@ -553,8 +556,9 @@ test("a workspace removed from Recent stays out, whatever it has to see, until t
 test("the document keeps a workspace removed from Recent until it is pinned or archived", () => {
   const doc = FoldersDocumentSchema.parse({});
   assert.deepEqual(doc.removedFromRecent, {});
-  const removed = removeFromRecent(doc, "w1", "2026-01-06T00:00:00Z");
+  const removed = removeFromRecent(doc, "w1", "2026-01-06T00:00:00Z", ["w2", "w1", "w3"]);
   assert.deepEqual(removed.removedFromRecent, { w1: "2026-01-06T00:00:00Z" });
+  assert.deepEqual([removed.recentHeld, removed.recentHeldAt], [["w2", "w3"], "2026-01-06T00:00:00Z"], "Recent holds the rest");
   assert.deepEqual(withoutRecentRemoval(removed, ["w1", "w2"]).removedFromRecent, {});
   assert.equal(withoutRecentRemoval(doc, ["w1"]), doc, "nothing to forget");
 });
@@ -586,18 +590,51 @@ test("dropping a workspace between Recent's rows puts it there; dropping where i
 });
 
 test("placing a workspace in Recent saves its order as shown; removing a workspace lets go of its place", () => {
-  let doc = removeFromRecent(empty(), "w9", "2026-01-06T00:00:00Z");
+  let doc = removeFromRecent(empty(), "w9", "2026-01-06T00:00:00Z", ["w9", "w1", "w2"]);
   doc = placeInRecent(doc, "w3", ["w1", "w2", "w3"], "w1");
   assert.deepEqual(doc.recentOrder, ["w3", "w1", "w2"]);
   doc = placeInRecent(doc, "w9", ["w3", "w1", "w2"], null);
   assert.deepEqual(doc.recentOrder, ["w3", "w1", "w2", "w9"]);
   assert.deepEqual(doc.removedFromRecent, {}, "a removed workspace placed there is let back in");
   assert.equal(placeInRecent(doc, "w1", ["w3", "w1"], "missing"), doc);
-  doc = removeFromRecent(doc, "w1", "2026-01-07T00:00:00Z");
+  doc = removeFromRecent(doc, "w1", "2026-01-07T00:00:00Z", ["w3", "w1", "w2", "w9"]);
   assert.deepEqual(doc.recentOrder, ["w3", "w2", "w9"], "back on top when it returns");
   assert.deepEqual(withoutRecentPlace(doc, ["w2", "w5"]).recentOrder, ["w3", "w9"]);
   assert.equal(withoutRecentPlace(doc, ["w1"]), doc, "no place to let go of");
   assert.deepEqual(resetRecentOrder(doc).recentOrder, []);
   const plain = empty();
   assert.equal(resetRecentOrder(plain), plain, "already in its own order");
+});
+
+test("a workspace removed from Recent leaves its place empty; Recent then takes in only what the person writes in", () => {
+  const day = (d: number) => `2026-01-${String(d).padStart(2, "0")}T00:00:00Z`;
+  // Workspace wN was last written in on the Nth day given.
+  const listed = (...days: number[]) =>
+    groupWorkspaces(days.map((d, i) => ({ ...agent(`a${i + 1}`, `w${i + 1}`, day(d)), lastMessageAt: day(d) })), new Map());
+  const ids = (list: ListedWorkspace[], doc: FoldersDocument, pins: Record<string, string> = {}) =>
+    recentWorkspaces(list, (id) => pins[id] ?? "", {
+      limit: 4,
+      removedAt: (id) => doc.removedFromRecent[id] ?? "",
+      held: { at: doc.recentHeldAt, ids: doc.recentHeld },
+    }).map((ws) => ws.id);
+  const before = listed(1, 2, 3, 4, 5, 6);
+  let doc = empty();
+  assert.deepEqual(ids(before, doc), ["w6", "w5", "w4", "w3"]);
+  doc = removeFromRecent(doc, "w5", day(10), ids(before, doc));
+  assert.deepEqual(ids(before, doc), ["w6", "w4", "w3"], "w2 does not take its place");
+  doc = removeFromRecent(doc, "w6", day(11), ids(before, doc));
+  assert.deepEqual(ids(before, doc), ["w4", "w3"]);
+  // Written in since: w1 comes in, and w5 comes back.
+  assert.deepEqual(ids(listed(12, 2, 3, 4, 13, 6), doc), ["w5", "w1", "w4", "w3"]);
+  // A question in a workspace Recent let go of shows all the same.
+  const asking = before.map((ws) =>
+    ws.id === "w2" ? { ...ws, agents: ws.agents.map((a) => ({ ...a, bucket: "needs_input" as const })) } : ws,
+  );
+  assert.deepEqual(ids(asking, doc), ["w4", "w3", "w2"]);
+  // Pinned since, it is held on to, so it stays once unpinned.
+  const pinned = holdInRecent(doc, "w1");
+  assert.deepEqual(ids(before, pinned, { w1: day(14) }), ["w1", "w4", "w3"]);
+  assert.deepEqual(ids(before, pinned), ["w4", "w3", "w1"]);
+  const plain = empty();
+  assert.equal(holdInRecent(plain, "w1"), plain, "nothing is held before the first removal");
 });

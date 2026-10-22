@@ -25,6 +25,7 @@ import {
   mergeTargets,
   moveWorkspace,
   pinWorkspaceRpc,
+  holdInRecent,
   removeFromRecent,
   renameConversationRpc,
   renameFolder,
@@ -449,8 +450,8 @@ export function RowMenu(props: {
   workspaces?: readonly ListedWorkspace[];
   /** Leave out to hide merging and splitting. */
   mover?: Mover;
-  /** It is listed under Recent, so it can be removed from there. */
-  inRecent?: boolean;
+  /** The workspaces Recent lists, in order; one listed there can be removed from it. */
+  recent?: readonly string[];
   /** Recent is in an order the user dragged it into, which it can go back from. */
   recentOrdered?: boolean;
   onClose(): void;
@@ -469,6 +470,7 @@ export function RowMenu(props: {
   const resume = single ? resumeCommand(single.provider, single.sessionId) : null;
   const current = workspaceFolderOf(folders.doc, ws);
   const pinned = Boolean(meta?.pinnedAt);
+  const inRecent = props.recent?.includes(ws.id) ?? false;
   const act = useAct(onClose);
   const copy = (text: string, done: string) => void act(() => copyText(text), done, "Could not copy.");
 
@@ -609,13 +611,15 @@ export function RowMenu(props: {
             const result = await pin({ workspaceId: ws.id, pinned: !pinned });
             if (!result.ok) throw new Error(result.reason);
             // Pinned, it is back in Recent for good, not only until it is unpinned, and on top.
-            if (!pinned) await folders.update((d) => withoutRecentPlace(withoutRecentRemoval(d, [ws.id]), [ws.id]));
+            if (!pinned) {
+              await folders.update((d) => holdInRecent(withoutRecentPlace(withoutRecentRemoval(d, [ws.id]), [ws.id]), ws.id));
+            }
           },
           pinned ? "Unpinned" : "Pinned to Recent",
           pinned ? "Could not unpin." : "Could not pin.",
         ),
       )}
-      {props.inRecent
+      {inRecent
         ? action("unrecent", "ListX", "Remove from Recent", () =>
             void act(
               async () => {
@@ -623,7 +627,8 @@ export function RowMenu(props: {
                   const result = await pin({ workspaceId: ws.id, pinned: false });
                   if (!result.ok) throw new Error(result.reason);
                 }
-                if (!(await folders.update((d) => removeFromRecent(d, ws.id, new Date().toISOString())))) {
+                const at = new Date().toISOString();
+                if (!(await folders.update((d) => removeFromRecent(d, ws.id, at, props.recent ?? [])))) {
                   throw new Error("not saved");
                 }
               },
@@ -632,7 +637,7 @@ export function RowMenu(props: {
             ),
           )
         : null}
-      {props.inRecent && props.recentOrdered
+      {inRecent && props.recentOrdered
         ? action("recent-order", "ListRestart", "Reset Recent order", () =>
             void act(
               async () => {
