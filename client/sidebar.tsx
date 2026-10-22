@@ -107,10 +107,11 @@ const AT_END = "";
  * Moves into another project ask first. Right-click or long-press a workspace
  * for the menu, which does the same. Folders are dragged into order with the
  * mouse, and right-clicked (or More on touch screens) to add, rename or delete.
- * Recent, above the folders, lists the workspaces pinned in Paseo and the ones used
- * last, so the few in hand are one press away; the menu pins and unpins. Its rows take
- * drops as a folder's do: a workspace dropped between them is put in place there (one
- * not in Recent yet is pinned), and the middle of a row merges. A conversation listed
+ * Recent, shown as In progress, lists above the folders the workspaces pinned in
+ * Paseo and the ones the person is working in, so the few in hand are one press
+ * away; the menu pins, unpins and removes them. Its rows take drops as a folder's
+ * do: a workspace dropped between them is put in place there (one not in Recent
+ * yet is pinned), and the middle of a row merges. A conversation listed
  * under its workspace has a menu of its own, to rename it.
  */
 export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginSidebarItemProps) {
@@ -397,16 +398,16 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
         const result = await pin({ workspaceId: ws.id, pinned: true });
         if (!result.ok) {
           setPlacedDoc(null);
-          toast.error("Could not pin it to Recent.");
+          toast.error("Could not pin it to In progress.");
           return;
         }
       }
       if (await ready.update(change)) {
-        if (joining) toast.show("Pinned to Recent", { variant: "success" });
+        if (joining) toast.show("Pinned to In progress", { variant: "success" });
         return;
       }
       setPlacedDoc(null);
-      toast.error(joining ? "Pinned to Recent, but could not put it in place." : "Could not reorder. Try again.");
+      toast.error(joining ? "Pinned to In progress, but could not put it in place." : "Could not reorder. Try again.");
     })();
   }
 
@@ -624,9 +625,9 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
       const joining = !recentShown.some((w) => w.id === filing.ws.id);
       const first = recentShown.find((w) => w.id !== filing.ws.id)?.id;
       const verb = joining ? "Pin" : "Move";
-      if (action.before === null) hint = `${verb} to the bottom of Recent`;
-      else if (action.before === first) hint = `${verb} to the top of Recent`;
-      else hint = joining ? `Pin to Recent above “${titleOf(action.before)}”` : `Move above “${titleOf(action.before)}”`;
+      if (action.before === null) hint = `${verb} to the bottom of In progress`;
+      else if (action.before === first) hint = `${verb} to the top of In progress`;
+      else hint = joining ? `Pin to In progress above “${titleOf(action.before)}”` : `Move above “${titleOf(action.before)}”`;
     } else if (action.kind === "split") hint = `New workspace in ${nameOf(action.folderId)}`;
     else {
       const from = workspaceMeta.get(filing.ws.id)?.directory;
@@ -1050,14 +1051,14 @@ function InsertLine({ theme, end = false }: { theme: PluginTheme; end?: boolean 
   );
 }
 
-/** The Recent header: press it to show or hide the workspaces under it. */
+/** The Recent header, shown as In progress: press it to show or hide the workspaces under it. */
 function RecentItem(props: { open: boolean; status: StatusBucket; theme: PluginTheme; onToggle(): void }) {
   const { theme } = props;
   return (
     <SidebarRow
       id="recent"
-      icon="Clock"
-      label="Recent"
+      icon="Briefcase"
+      label="In progress"
       active={false}
       onPress={props.onToggle}
       trailing={
@@ -1065,7 +1066,7 @@ function RecentItem(props: { open: boolean; status: StatusBucket; theme: PluginT
           <BucketIndicator bucket={props.status} theme={theme} />
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={props.open ? "Collapse Recent" : "Expand Recent"}
+            accessibilityLabel={props.open ? "Collapse In progress" : "Expand In progress"}
             onPress={props.onToggle}
             hitSlop={8}
           >

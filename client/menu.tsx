@@ -605,7 +605,7 @@ export function RowMenu(props: {
         : null}
       {opener("rename", "Pencil", "Rename workspace", () => setDraft(ws.title))}
       {/* Paseo's own pin, which Recent lists first; Paseo's menu puts it after Rename too. */}
-      {action("pin", pinned ? "PinOff" : "Pin", pinned ? "Unpin from Recent" : "Pin to Recent", () =>
+      {action("pin", pinned ? "PinOff" : "Pin", pinned ? "Unpin from In progress" : "Pin to In progress", () =>
         void act(
           async () => {
             const result = await pin({ workspaceId: ws.id, pinned: !pinned });
@@ -615,12 +615,12 @@ export function RowMenu(props: {
               await folders.update((d) => holdInRecent(withoutRecentPlace(withoutRecentRemoval(d, [ws.id]), [ws.id]), ws.id));
             }
           },
-          pinned ? "Unpinned" : "Pinned to Recent",
+          pinned ? "Unpinned" : "Pinned to In progress",
           pinned ? "Could not unpin." : "Could not pin.",
         ),
       )}
       {inRecent
-        ? action("unrecent", "ListX", "Remove from Recent", () =>
+        ? action("unrecent", "ListX", "Remove from In progress", () =>
             void act(
               async () => {
                 if (pinned) {
@@ -632,18 +632,18 @@ export function RowMenu(props: {
                   throw new Error("not saved");
                 }
               },
-              "Removed from Recent",
-              "Could not remove it from Recent.",
+              "Removed from In progress",
+              "Could not remove it from In progress.",
             ),
           )
         : null}
       {inRecent && props.recentOrdered
-        ? action("recent-order", "ListRestart", "Reset Recent order", () =>
+        ? action("recent-order", "ListRestart", "Reset In progress order", () =>
             void act(
               async () => {
                 if (!(await folders.update(resetRecentOrder))) throw new Error("not saved");
               },
-              "Recent is back in its own order",
+              "In progress is back in its own order",
               "Could not reset the order.",
             ),
           )

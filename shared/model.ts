@@ -263,16 +263,17 @@ export function groupWorkspaces(
 export const RECENT_LIMIT = 8;
 
 /**
- * The workspaces under Recent: those pinned in Paseo first, the latest pin on top as in
- * Paseo's own Pinned group, then the others, last used first. Pinned workspaces and those
- * with something to see (a reply not yet read, a question, an error or work in progress)
- * always stay; the rest fill the list up to `limit`. A workspace the person removed from
- * Recent stays out, whatever it has to see, until they write in it again, and no older
- * workspace takes its place: once one has been removed, Recent takes in only the workspaces
- * it `held` then and those the person writes in, besides any with something to see. Once the
- * person has dragged Recent into an `order`, it keeps that order, as a folder does. Of workspaces
- * the order does not hold yet, those pinned or used since come on top; others, which only
- * fill a place left empty, go at the bottom.
+ * The workspaces under Recent, which the sidebar shows as In progress: those pinned in Paseo
+ * first, the latest pin on top as in Paseo's own Pinned group, then the others, last used
+ * first. Pinned workspaces and those with something to see (a reply not yet read, a
+ * question, an error or work in progress) always stay; the rest fill the list up to
+ * `limit`. A workspace the person removed from Recent stays out, whatever it has to see,
+ * until they write in it again, and no older workspace takes its place: once one has been
+ * removed, Recent takes in only the workspaces it `held` then and those the person writes
+ * in, besides any with something to see. Once the person has dragged Recent into an
+ * `order`, it keeps that order, as a folder does. Of workspaces the order does not hold
+ * yet, those pinned or used since come on top; others, which only fill a place left empty,
+ * go at the bottom.
  */
 export function recentWorkspaces<T extends ListedWorkspace>(
   workspaces: readonly T[],
