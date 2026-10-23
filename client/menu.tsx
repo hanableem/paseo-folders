@@ -40,8 +40,10 @@ import type { ReadyFolders, WorkspaceMeta } from "./data";
 import type { Mover } from "./move";
 import { rectOfId } from "./web-dom";
 
-type Page = "move" | "rename" | "merge" | "split";
-type ConversationPage = "rename" | "move" | "merge";
+type Page = "move" | "rename" | "merge" | "split" | "more";
+/** Pages under More, which holds what is mostly done by dragging. */
+type MorePage = Exclude<Page, "rename" | "more">;
+type ConversationPage = "rename" | "move" | "merge" | "more";
 type FolderPage = "new" | "rename";
 
 const PAGE_LABELS: Record<Page, string> = {
@@ -49,11 +51,13 @@ const PAGE_LABELS: Record<Page, string> = {
   rename: "Rename workspace",
   merge: "Merge into workspace",
   split: "Split off a conversation",
+  more: "More",
 };
 const CONVERSATION_PAGE_LABELS: Record<ConversationPage, string> = {
   rename: "Rename conversation",
   move: "Move to folder",
   merge: "Move into workspace",
+  more: "More",
 };
 const FOLDER_PAGE_LABELS: Record<FolderPage, string> = {
   new: "New folder",
@@ -440,11 +444,12 @@ function useAct(onClose: () => void) {
 
 /**
  * Right-click (or long-press) menu for a workspace row. It follows Paseo's own
- * workspace menu (copy path and branch, rename, pin, archive), puts Move to folder
- * where Paseo has Labels, and adds the tab menu's copy commands for a workspace
- * holding a single conversation, grouped as in the tab menu. With a mover it also
- * merges the workspace into another one and splits a conversation off into a
- * workspace of its own.
+ * workspace menu (copy path and branch, rename, pin, archive), and adds the tab
+ * menu's copy commands for a workspace holding a single conversation, grouped as
+ * in the tab menu. What is mostly done by dragging waits under More: Move to
+ * folder, where Paseo has Labels, and with a mover, merging the workspace into
+ * another one and splitting a conversation off into a workspace of its own; so
+ * does putting In progress back in its own order.
  */
 export function RowMenu(props: {
   ws: ListedWorkspace;
@@ -472,6 +477,8 @@ export function RowMenu(props: {
   const [draft, setDraft] = useState(ws.title);
   const [refocus, setRefocus] = useState(0);
   const [query, setQuery] = useState("");
+  // The page chosen under More, shown there in place of its items.
+  const [inner, setInner] = useState<MorePage | null>(null);
   const single = ws.agents.length === 1 ? ws.agents[0] : null;
   const resume = single ? resumeCommand(single.provider, single.sessionId) : null;
   const current = workspaceFolderOf(folders.doc, ws);
@@ -499,6 +506,18 @@ export function RowMenu(props: {
   const opener = (key: Page, icon: string, label: string, prepare?: () => void) => (
     <MenuItem key={key} theme={theme} icon={icon} label={label} trailing={chevron} {...sub.opener(key, prepare)} />
   );
+  // An item under More that opens a page of its own there.
+  const into = (key: MorePage, icon: string, label: string, prepare?: () => void) =>
+    item(
+      key,
+      icon,
+      label,
+      () => {
+        prepare?.();
+        setInner(key);
+      },
+      chevron,
+    );
   const mergeInto = (target: ListedWorkspace) => {
     onClose();
     if (mover) void mover.merge(ws, target);
@@ -516,6 +535,37 @@ export function RowMenu(props: {
   }
 
   function page(key: Page): ReactNode {
+    if (key === "more") {
+      if (inner) {
+        return (
+          <>
+            {item("more-back", "ChevronLeft", "More", () => setInner(null))}
+            <MenuSeparator theme={theme} />
+            {page(inner)}
+          </>
+        );
+      }
+      return (
+        <>
+          {into("move", "FolderInput", "Move to folder")}
+          {mover && ws.agents.length > 0 && (props.workspaces?.length ?? 0) > 1
+            ? into("merge", "Merge", "Merge into workspace", () => setQuery(""))
+            : null}
+          {mover && ws.agents.length > 1 ? into("split", "SquareSplitHorizontal", "Split off a conversation") : null}
+          {inRecent && props.recentOrdered
+            ? item("recent-order", "ListRestart", "Reset In progress order", () =>
+                void act(
+                  async () => {
+                    if (!(await folders.update(resetRecentOrder))) throw new Error("not saved");
+                  },
+                  "In progress is back in its own order",
+                  "Could not reset the order.",
+                ),
+              )
+            : null}
+        </>
+      );
+    }
     if (key === "merge") {
       const targets = mergeTargets(folders.doc, props.workspaces ?? [], ws, query).slice(0, MAX_TARGETS);
       return (
@@ -643,23 +693,8 @@ export function RowMenu(props: {
             ),
           )
         : null}
-      {inRecent && props.recentOrdered
-        ? action("recent-order", "ListRestart", "Reset In progress order", () =>
-            void act(
-              async () => {
-                if (!(await folders.update(resetRecentOrder))) throw new Error("not saved");
-              },
-              "In progress is back in its own order",
-              "Could not reset the order.",
-            ),
-          )
-        : null}
       <MenuSeparator theme={theme} />
-      {opener("move", "FolderInput", "Move to folder")}
-      {mover && ws.agents.length > 0 && (props.workspaces?.length ?? 0) > 1
-        ? opener("merge", "Merge", "Merge into workspace", () => setQuery(""))
-        : null}
-      {mover && ws.agents.length > 1 ? opener("split", "SquareSplitHorizontal", "Split off a conversation") : null}
+      {opener("more", "Ellipsis", "More", () => setInner(null))}
       {action("archive", "Archive", "Archive", () =>
         void act(
           async () => {
@@ -702,10 +737,10 @@ export function RowMenu(props: {
 /**
  * Right-click (or long-press, or More) menu for a conversation listed under its workspace. It
  * has what the workspace's menu has, for this conversation alone: copy its path, branch, resume
- * command and agent id, rename it, and archive it, as closing its tab does. With a mover it also
- * moves the conversation: to a folder, in a workspace of its own there; into another workspace,
- * as a tab; or to a new workspace beside its own. Pinning and In progress are the workspace's,
- * so they stay in the workspace's menu.
+ * command and agent id, rename it, and archive it, as closing its tab does. With a mover, More
+ * moves the conversation, as dragging it does: to a folder, in a workspace of its own there;
+ * into another workspace, as a tab; or to a new workspace beside its own. Pinning and In
+ * progress are the workspace's, so they stay in the workspace's menu.
  */
 export function ConversationMenu(props: {
   ws: ListedWorkspace;
@@ -728,6 +763,8 @@ export function ConversationMenu(props: {
   const [draft, setDraft] = useState(agent.title);
   const [refocus, setRefocus] = useState(0);
   const [query, setQuery] = useState("");
+  // The page chosen under More, shown there in place of its items.
+  const [inner, setInner] = useState<"move" | "merge" | null>(null);
   const resume = resumeCommand(agent.provider, agent.sessionId);
   const current = workspaceFolderOf(folders.doc, ws);
   const act = useAct(onClose);
@@ -751,6 +788,18 @@ export function ConversationMenu(props: {
   const opener = (key: ConversationPage, icon: string, label: string, prepare?: () => void) => (
     <MenuItem key={key} theme={theme} icon={icon} label={label} trailing={chevron} {...sub.opener(key, prepare)} />
   );
+  // An item under More that opens a page of its own there.
+  const into = (key: "move" | "merge", icon: string, label: string, prepare?: () => void) =>
+    item(
+      key,
+      icon,
+      label,
+      () => {
+        prepare?.();
+        setInner(key);
+      },
+      chevron,
+    );
   /** Runs a move once the menu has closed; the mover says how it went. */
   const moving = (work: (m: Mover) => Promise<boolean>) => () => {
     onClose();
@@ -794,6 +843,26 @@ export function ConversationMenu(props: {
   );
 
   function page(key: ConversationPage): ReactNode {
+    if (key === "more") {
+      if (inner) {
+        return (
+          <>
+            {item("more-back", "ChevronLeft", "More", () => setInner(null))}
+            <MenuSeparator theme={theme} />
+            {page(inner)}
+          </>
+        );
+      }
+      return (
+        <>
+          {into("move", "FolderInput", "Move to folder")}
+          {(props.workspaces?.length ?? 0) > 1 ? into("merge", "Merge", "Move into workspace", () => setQuery("")) : null}
+          {ws.agents.length > 1
+            ? item("split", "SquareSplitHorizontal", "Move to a new workspace", moving((m) => m.split(ws, agent)))
+            : null}
+        </>
+      );
+    }
     if (key === "move") {
       // In any folder, its own workspace there; in its workspace's folder, that is a new workspace beside it.
       return folderOrder(folders.doc).map((f) =>
@@ -849,11 +918,7 @@ export function ConversationMenu(props: {
       )}
       {opener("rename", "Pencil", "Rename conversation", () => setDraft(agent.title))}
       <MenuSeparator theme={theme} />
-      {mover ? opener("move", "FolderInput", "Move to folder") : null}
-      {mover && (props.workspaces?.length ?? 0) > 1 ? opener("merge", "Merge", "Move into workspace", () => setQuery("")) : null}
-      {mover && ws.agents.length > 1
-        ? action("split", "SquareSplitHorizontal", "Move to a new workspace", moving((m) => m.split(ws, agent)))
-        : null}
+      {mover ? opener("more", "Ellipsis", "More", () => setInner(null)) : null}
       {action("archive", "Archive", "Archive conversation", () =>
         void act(
           async () => {
