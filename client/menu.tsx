@@ -41,6 +41,7 @@ import type { Mover } from "./move";
 import { rectOfId } from "./web-dom";
 
 type Page = "move" | "rename" | "merge" | "split";
+type ConversationPage = "rename" | "move" | "merge";
 type FolderPage = "new" | "rename";
 
 const PAGE_LABELS: Record<Page, string> = {
@@ -48,6 +49,11 @@ const PAGE_LABELS: Record<Page, string> = {
   rename: "Rename workspace",
   merge: "Merge into workspace",
   split: "Split off a conversation",
+};
+const CONVERSATION_PAGE_LABELS: Record<ConversationPage, string> = {
+  rename: "Rename conversation",
+  move: "Move to folder",
+  merge: "Move into workspace",
 };
 const FOLDER_PAGE_LABELS: Record<FolderPage, string> = {
   new: "New folder",
@@ -694,29 +700,42 @@ export function RowMenu(props: {
 }
 
 /**
- * Right-click (or long-press, or More) menu for a conversation listed under its workspace,
- * like Paseo's tab menu: copy its resume command and agent id, or rename it. With a mover,
- * a conversation sharing its workspace can also move to a new workspace of its own.
+ * Right-click (or long-press, or More) menu for a conversation listed under its workspace. It
+ * has what the workspace's menu has, for this conversation alone: copy its path, branch, resume
+ * command and agent id, rename it, and archive it, as closing its tab does. With a mover it also
+ * moves the conversation: to a folder, in a workspace of its own there; into another workspace,
+ * as a tab; or to a new workspace beside its own. Pinning and In progress are the workspace's,
+ * so they stay in the workspace's menu.
  */
 export function ConversationMenu(props: {
   ws: ListedWorkspace;
   agent: ListedAgent;
+  meta: WorkspaceMeta | undefined;
   at: MenuPoint;
   theme: PluginTheme;
-  /** Leave out to hide moving it to a new workspace. */
+  folders: ReadyFolders;
+  /** Every listed workspace, for Move into workspace. */
+  workspaces?: readonly ListedWorkspace[];
+  /** Leave out to hide moving it. */
   mover?: Mover;
   onClose(): void;
 }) {
-  const { ws, agent, theme, mover, onClose } = props;
+  const { ws, agent, meta, theme, folders, mover, onClose } = props;
+  const paseo = usePaseo();
   const renameTab = useRpc(renameConversationRpc);
   const toast = useToast();
-  const sub = useSubmenu<"rename">();
+  const sub = useSubmenu<ConversationPage>();
   const [draft, setDraft] = useState(agent.title);
   const [refocus, setRefocus] = useState(0);
+  const [query, setQuery] = useState("");
   const resume = resumeCommand(agent.provider, agent.sessionId);
+  const current = workspaceFolderOf(folders.doc, ws);
   const act = useAct(onClose);
   const copy = (text: string, done: string) => void act(() => copyText(text), done, "Could not copy.");
 
+  const item = (key: string, icon: string, label: string, onPress: () => void, trailing?: ReactNode) => (
+    <MenuItem key={key} theme={theme} icon={icon} label={label} onPress={onPress} trailing={trailing} />
+  );
   const action = (key: string, icon: string, label: string, onPress: () => void, trailing?: ReactNode) => (
     <MenuItem
       key={key}
@@ -729,6 +748,14 @@ export function ConversationMenu(props: {
     />
   );
   const chevron = <Icon name="ChevronRight" size={14} color={theme.colors.foregroundMuted} />;
+  const opener = (key: ConversationPage, icon: string, label: string, prepare?: () => void) => (
+    <MenuItem key={key} theme={theme} icon={icon} label={label} trailing={chevron} {...sub.opener(key, prepare)} />
+  );
+  /** Runs a move once the menu has closed; the mover says how it went. */
+  const moving = (work: (m: Mover) => Promise<boolean>) => () => {
+    onClose();
+    if (mover) void work(mover);
+  };
 
   const save = () => {
     const title = draft.trim();
@@ -766,8 +793,52 @@ export function ConversationMenu(props: {
     </>
   );
 
+  function page(key: ConversationPage): ReactNode {
+    if (key === "move") {
+      // In any folder, its own workspace there; in its workspace's folder, that is a new workspace beside it.
+      return folderOrder(folders.doc).map((f) =>
+        item(
+          f.id,
+          f.id === current ? "Check" : f.id === UNSORTED_ID ? "Inbox" : "Folder",
+          f.name,
+          moving((m) => m.split(ws, agent, f.id)),
+        ),
+      );
+    }
+    if (key === "merge") {
+      const targets = mergeTargets(folders.doc, props.workspaces ?? [], ws, query).slice(0, MAX_TARGETS);
+      return (
+        <>
+          <MenuField
+            theme={theme}
+            value={query}
+            onChangeText={(text) => {
+              sub.typing();
+              setQuery(text);
+            }}
+            label="Search workspaces"
+            placeholder="Search workspaces"
+          />
+          {targets.length === 0 ? (
+            <MenuNote theme={theme}>No other workspace matches.</MenuNote>
+          ) : (
+            targets.map((t) => {
+              const where = workspaceFolderOf(folders.doc, t);
+              const hint = where === current ? undefined : <MenuHint theme={theme}>{folderName(folders.doc, where)}</MenuHint>;
+              return item(t.id, "PanelsTopLeft", t.title, moving((m) => m.merge(ws, t, [agent.id])), hint);
+            })
+          )}
+        </>
+      );
+    }
+    return renamePage;
+  }
+
+  // In the workspace menu's order, for this conversation alone.
   const main = (
     <>
+      {meta?.directory ? action("path", "Copy", "Copy path", () => copy(meta.directory, "Path copied")) : null}
+      {meta?.branch ? action("branch", "Copy", "Copy branch name", () => copy(meta.branch, "Branch name copied")) : null}
       {resume ? action("resume", "Copy", "Copy resume command", () => copy(resume, "Resume command copied")) : null}
       {action(
         "agent-id",
@@ -776,25 +847,26 @@ export function ConversationMenu(props: {
         () => copy(agent.id, "Agent id copied"),
         <MenuHint theme={theme}>{agent.id.slice(0, 7)}</MenuHint>,
       )}
-      <MenuItem
-        theme={theme}
-        icon="Pencil"
-        label="Rename conversation"
-        trailing={chevron}
-        {...sub.opener("rename", () => setDraft(agent.title))}
-      />
-      {mover && ws.agents.length > 1 ? (
-        <>
-          <MenuSeparator theme={theme} />
-          {action("split", "SquareSplitHorizontal", "Move to a new workspace", () => {
-            onClose();
-            void mover.split(ws, agent);
-          })}
-        </>
-      ) : null}
+      {opener("rename", "Pencil", "Rename conversation", () => setDraft(agent.title))}
+      <MenuSeparator theme={theme} />
+      {mover ? opener("move", "FolderInput", "Move to folder") : null}
+      {mover && (props.workspaces?.length ?? 0) > 1 ? opener("merge", "Merge", "Move into workspace", () => setQuery("")) : null}
+      {mover && ws.agents.length > 1
+        ? action("split", "SquareSplitHorizontal", "Move to a new workspace", moving((m) => m.split(ws, agent)))
+        : null}
+      {action("archive", "Archive", "Archive conversation", () =>
+        void act(
+          async () => {
+            await paseo.agents.ref(agent.id).archive();
+          },
+          "Archived",
+          "Could not archive.",
+        ),
+      )}
     </>
   );
 
+  const open = sub.open;
   return (
     <Menu
       at={props.at}
@@ -802,16 +874,16 @@ export function ConversationMenu(props: {
       theme={theme}
       onClose={onClose}
       submenu={
-        sub.beside && sub.open
-          ? { label: "Rename conversation", anchor: sub.anchor, onEnter: sub.keep, content: renamePage }
+        sub.beside && open
+          ? { label: CONVERSATION_PAGE_LABELS[open], anchor: sub.anchor, onEnter: sub.keep, content: page(open) }
           : null
       }
     >
-      {!sub.beside && sub.open ? (
+      {!sub.beside && open ? (
         <>
           <MenuItem theme={theme} icon="ChevronLeft" label={agent.title} onPress={sub.close} />
           <MenuSeparator theme={theme} />
-          {renamePage}
+          {page(open)}
         </>
       ) : (
         main

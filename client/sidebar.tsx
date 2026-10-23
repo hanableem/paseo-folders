@@ -845,8 +845,11 @@ export function FoldersSidebarItem({ theme, currentScreen, openScreen }: PluginS
           key={menu.agent.id}
           ws={menu.ws}
           agent={menu.agent}
+          meta={workspaceMeta.get(menu.ws.id)}
           at={menu.at}
           theme={theme}
+          folders={ready}
+          workspaces={workspaces}
           mover={mover}
           onClose={closeMenu}
         />
