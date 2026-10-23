@@ -70,9 +70,10 @@ export interface MenuPoint {
   y: number;
 }
 
-// Paseo's own menu metrics (desktop): 28 px items, 4 px page padding, 220 px wide. A
-// context menu opens 4 px below the pointer and keeps 8 px clear of the window's edges.
-const MENU_WIDTH = 220;
+// Paseo's own menu metrics (desktop): 28 px items, 4 px page padding, 220 px wide; ours are
+// 240 px, so that Split off a conversation fits beside its arrow. A context menu opens 4 px
+// below the pointer and keeps 8 px clear of the window's edges.
+const MENU_WIDTH = 240;
 const ITEM_HEIGHT = 28;
 const OFFSET = 4;
 const EDGE = 8;
