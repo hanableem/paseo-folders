@@ -4,9 +4,10 @@ English | [简体中文](README.zh-CN.md)
 
 A [Paseo](https://paseo.sh) plugin that adds folders to the sidebar, so you can group workspaces by topic, not just by project. It can also merge workspaces and move a conversation to another workspace, which Paseo cannot do yet.
 
-<img src="docs/sidebar.png" width="600" alt="The Folders section at the top of Paseo's sidebar: folders with workspace counts, one folder open, and a workspace's menu showing Move to folder with the list of folders">
+<img src="docs/sidebar.png" width="600" alt="Paseo's sidebar with the Folders section: In progress at the top, folders with workspace counts below it, one folder open, and a workspace's menu with More open on Move to folder, Merge into workspace and Split off a conversation">
 
-- **Folders.** Put workspaces from any project into folders at the top of the sidebar, drag them from one folder to another, and drag them up or down to put them in order. Workspaces you have not filed wait under Unsorted, and **In progress**, above the folders, keeps the ones you are working on one click away.
+- **Folders.** Put workspaces from any project into folders at the top of the sidebar, drag them from one folder to another, and drag them up or down to put them in order. Workspaces you have not filed wait under Unsorted.
+- **In progress.** Above the folders, In progress lists the workspaces you are working on, wherever they are filed: the ones you pinned first, then the ones you wrote in last. Remove one when you are done with it.
 - **Merge and split.** Drag a workspace onto another to merge them: its conversations become tabs there. Drag a single conversation onto another workspace to move it, or onto a folder to give it a workspace of its own. Experimental.
 - **The same folders everywhere.** Folders are stored on your Paseo host, so your desktop and mobile apps show the same ones.
 
@@ -14,18 +15,38 @@ Paseo groups workspaces by project directory. If most of your work runs in the s
 
 ## Features
 
-- A **Folders** section at the top of the sidebar: one row per folder with its workspace count, and **Unsorted** for workspaces in no folder, shown even when empty, first unless you move it. Press a folder to open or close it; several can be open at once. An open folder lists eight workspaces, with **Show more** and **Show less** for the rest. A folder lists its workspaces newest first until you drag one into place; from then on it keeps your order, and workspaces new to it go on top. Rows show Paseo's status in front of the title (running ring, attention and error dots) and, for a single conversation, its provider's mark; a listed conversation shows its own the same way.
-- The workspace Paseo is showing is highlighted, as in Paseo's own list. Native mobile apps cannot read which one that is, so there the highlight marks the workspace last opened from the folders.
-- **In progress**, above the folders, lists the workspaces you are working on, wherever they are filed, so they are one click away. Workspaces pinned in Paseo come first, the latest pin on top; the others follow by your last message in them, newest first, eight in all. A pinned workspace, or one with something to see (a reply you have not read, a question, an error or a conversation still running), stays even past eight. Right-click a workspace and choose **Pin to In progress** or **Unpin from In progress**: this is Paseo's own **Pin to top**, so Paseo's list shows the pin too. Pinning goes through Paseo's internal daemon client, as moves do, so a Paseo update can break it. When you are done with a workspace, right-click it and choose **Remove from In progress**: it stays out, whatever it has to show, until you write in it again or pin it, and one that was pinned is unpinned. No older workspace takes its place: from then on In progress takes in only the workspaces you write in, besides those it lists, so it keeps just what you are working on. Drag In progress into order as you would a folder: drop a workspace on the top or bottom edge of one there to put it just above or below (a line shows where it will land). From then on it keeps your order: a workspace you pin or use comes in on top, and one that only fills a place left empty, at the bottom; to go back to pinned first, then last used, right-click a workspace there and choose **More** › **Reset In progress order**. Your order alone does not keep a workspace listed; pinning does, and a workspace from a folder dropped between the rows of In progress is pinned there. As in a folder, a workspace with several conversations shows how many; press the count and arrow to list them under it. Drop a workspace or a conversation on the middle of a workspace under In progress to merge it there, as on that workspace's row in its folder. Press **In progress** to collapse it.
-- Hover a folder and press **+** (on touch screens, an open folder shows it) to make a new workspace already filed there. It is a local workspace in the project most of that folder's workspaces use, and opens on Paseo's own new-tab screen. Paseo names a workspace after the prompt it was created with; this one starts empty, so once its first conversation has answered, it takes that conversation's title unless you have named it. One you leave empty stays in the folder as **New workspace**, and a day after it was made the plugin archives it, unless it is open, has a terminal, or you have named or pinned it. No files are deleted; to remove it sooner, right-click it and choose **Archive**. For another project or a worktree, use Paseo's **New workspace** and move the result.
-- With a mouse, drag a workspace onto a folder to move it, onto the top or bottom edge of another workspace to put it just above or below that one (a line shows where it will land; dropping it on its own folder puts it at the top), or onto the middle of another workspace to merge it into that one. A workspace with several conversations shows their count with an arrow; click it to list them, then drag one onto another workspace to move it there, or onto a folder to give it a workspace of its own in that folder. While you drag, the target row is outlined and a label under the pointer says what letting go will do. Hold the pointer near the top or bottom of the folders to scroll them, so rows out of view can still take the drop. Moves into another project ask first.
-- Manage folders right in the sidebar: drag a folder up or down with the mouse to put it in order (a line shows where it will land), press the new-folder button on the **Folders** header to add one, and right-click a folder (or press its **⋮**, which touch screens show on open folders) to make a workspace in it, rename it, add a folder below it or delete it. Deleting happens at once and sends its workspaces back to Unsorted.
-- Right-click a workspace, or long-press it on touch screens, for a menu modelled on Paseo's workspace menu: copy path, copy branch name, copy resume command and agent id, rename, **Pin to In progress**, **Remove from In progress** (for a workspace under In progress) and archive. **More** holds the rest: **Move to folder**, **Merge into workspace** and **Split off a conversation**, which dragging does too, and **Reset In progress order**. Paseo keeps a workspace's name apart from its conversations' titles, and a tab shows its conversation's title, so renaming a workspace that holds one conversation renames the conversation too: the tab then shows the same name. This goes through Paseo's internal daemon client, as pinning does.
-- Right-click a listed conversation, long-press it on touch screens, or press its **⋮**, for its workspace's menu, for that conversation alone: copy path, copy branch name, copy resume command and agent id, **Rename conversation** and **Archive conversation**, which is what closing its tab does. Under **More** it moves as dragging it does: **Move to folder** (it gets a workspace of its own in that folder), **Move into workspace** (it becomes a tab there; type to search) and **Move to a new workspace**. Renaming changes the conversation's title, which its tab shows, and leaves the workspace's name alone. Pinning and In progress belong to the whole workspace, so they stay in the workspace's menu.
-- Merging moves a workspace's conversations into another workspace, where they become tabs, and archives the emptied workspace. Splitting moves one conversation into a new workspace next to it. See [Merge and split workspaces](#merge-and-split-workspaces-experimental).
-- A management screen, laid out like Paseo's settings, to create, rename and delete folders, put them in order (press and hold a folder, then drag it), and search every workspace and the conversations inside it. Unsorted can be renamed and moved like a folder, but not deleted.
-- An optional suggestions file, so a script can propose folders and one-line notes per conversation.
-- Folder data lives in Paseo plugin settings on the host, so your desktop and mobile apps share it.
+### Folders
+
+- A **Folders** section at the top of the sidebar, with one row per folder and how many workspaces it holds. Press a folder to open or close it; several can be open at once.
+- An open folder lists eight workspaces, with **Show more** and **Show less** for the rest. It lists them newest first until you drag one into place; from then on it keeps your order, and workspaces new to it go on top.
+- **Unsorted** holds the workspaces in no folder. It is shown even when empty, comes first unless you move it, and is open by default when it has something in it. You can rename it, but not delete it.
+- Rows show Paseo's status in front of the title (running ring, attention and error dots) and, for a single conversation, its provider's mark. The workspace Paseo is showing is highlighted, as in Paseo's own list. Native mobile apps cannot read which one that is, so there the highlight marks the workspace last opened from the folders.
+- Hover a folder and press **+** (on touch screens, an open folder shows it) to make a new workspace already filed there. It is a local workspace in the project most of that folder's workspaces use, and opens on Paseo's own new-tab screen. It starts empty, so Paseo has no prompt to name it after: once its first conversation has answered, it takes that conversation's title, unless you have named it. One you leave empty is archived a day after it was made, unless it is open, has a terminal, or you have named or pinned it; no files are deleted. For another project or a worktree, use Paseo's **New workspace** and move the result.
+- Manage folders right in the sidebar: drag a folder up or down to put it in order, press the new-folder button on the **Folders** header to add one, and right-click a folder (or press its **⋮**) to make a workspace in it, rename it, add a folder below it or delete it. Deleting happens at once and sends its workspaces back to Unsorted.
+
+### In progress
+
+- **In progress**, above the folders, lists the workspaces you are working on, wherever they are filed. Workspaces pinned in Paseo come first, the latest pin on top; the others follow by your last message in them, eight in all. A pinned workspace, or one with something to see (a reply you have not read, a question, an error or a conversation still running), stays even past eight.
+- **Pin to In progress**, in a workspace's menu, is Paseo's own **Pin to top**, so Paseo's list shows the pin too.
+- When you are done with a workspace, choose **Remove from In progress** in its menu. It stays out, whatever it has to show, until you write in it again or pin it; one that was pinned is unpinned. No older workspace takes its place: from then on In progress takes in only the workspaces you write in, besides those it lists, so it keeps just what you are working on.
+- Drag In progress into order as you would a folder; from then on a workspace you pin or write in comes in on top. Your order alone does not keep a workspace listed; pinning does, and a workspace dropped from a folder between the rows of In progress is pinned there. **Reset In progress order** goes back to pinned first, then last used.
+- As in a folder, a workspace with several conversations can list them under it, and dropping a workspace or a conversation on the middle of a row merges it into that workspace. Press **In progress** to collapse it.
+
+### Dragging
+
+- With a mouse, drag a workspace onto a folder to move it there, onto the top or bottom edge of another workspace to put it just above or below that one (a line shows where it will land; dropped on its own folder, it goes to the top), or onto the middle of another workspace to merge it into that one.
+- A workspace with several conversations shows their count with an arrow; click it to list them, then drag one onto another workspace to move it there, or onto a folder to give it a workspace of its own in that folder.
+- While you drag, the target row is outlined and a label under the pointer says what letting go will do. Hold the pointer near the top or bottom of the folders to scroll them, so rows out of view can still take the drop. Moves into another project ask first.
+
+### Menus
+
+- Right-click a workspace, press its **⋮**, or long-press it on touch screens, for a menu modelled on Paseo's workspace menu: copy path, branch name, resume command and agent id (the last two for a workspace with one conversation), **Rename workspace**, **Pin to In progress**, **Remove from In progress** (for a workspace listed there) and **Archive**. **More** holds the rest: **Move to folder**, **Merge into workspace** and **Split off a conversation**, which dragging does too, and, once you have dragged In progress into order, **Reset In progress order**.
+- Paseo keeps a workspace's name apart from its conversations' titles, and a tab shows its conversation's title, so renaming a workspace that holds one conversation renames the conversation too: the tab then shows the same name.
+- A listed conversation has the same menu for itself alone: right-click it, press its **⋮**, or long-press it. **Rename conversation** changes the title its tab shows and leaves the workspace's name alone, and **Archive conversation** does what closing its tab does. Its **More** moves it as dragging does: **Move to folder** (to a workspace of its own in that folder), **Move into workspace** (as a tab there; type to search) and **Move to a new workspace**. Pinning and In progress belong to the whole workspace, so they stay in the workspace's menu.
+
+### Folders screen
+
+Press **Folders** at the top of the sidebar for a screen laid out like Paseo's settings: create, rename and delete folders, put them in order (press and hold a folder, then drag it), set up the [suggestions file](#suggestions-file), and search every workspace and the conversations inside it.
 
 Subagents and archived workspaces are left out.
 
@@ -45,11 +66,29 @@ or, from a local copy:
 paseo plugin install /absolute/path/to/paseo-folders
 ```
 
-Paseo asks you to trust the plugin. Its server part registers the settings document, reads the suggestions file, and moves conversations when you merge or split workspaces.
+Paseo asks you to trust the plugin. Its server part registers the settings document, reads the suggestions file, and asks the Paseo daemon to pin and rename workspaces and to move conversations.
+
+## Merge and split workspaces (experimental)
+
+Paseo cannot yet move a tab from one workspace to another. The plugin does it for idle conversations:
+
+- Drag a workspace onto another workspace, or choose **More** › **Merge into workspace** in its menu (workspaces in the same folder are listed first; type to search the rest). Its conversations become tabs in the other workspace, and the emptied workspace is archived.
+- Open a workspace's conversation list (the count and arrow on its row) and drag one conversation onto another workspace to move just that one, or choose **More** › **Move into workspace** in the conversation's menu.
+- Drag a listed conversation onto a folder to give it a workspace of its own there, or choose **More** › **Move to folder** in its menu. **Move to a new workspace** there (or **Split off a conversation** in the workspace's menu) gives it a new workspace in the same folder.
+
+Moves within one project happen as soon as you let go. A move into another project opens a dialog first, naming both projects, because the conversation's commands and file changes happen in the new project from then on. Afterwards the workspace that received conversations opens, with its conversations listed. A workspace without a title of its own keeps the name it showed when you dropped on it, and a workspace named after a conversation (as a split names it) takes the name of the newest conversation left when that one moves out.
+
+- Within one directory, Paseo archives the conversation and imports its session into the other workspace, reusing the same agent record: the conversation keeps its ID, history, title, mode and model.
+- Into a workspace of another directory (another project), only Claude conversations can move. Claude Code resumes a session by ID from any directory and keeps writing to the transcript where it started, so the history stays; the agent gets a new Paseo ID, and its title, labels, mode, model, thinking option, folder and note are carried over. Before the old record is deleted, a copy is saved under `<Paseo home>/paseo-folders/moves/`. Paseo tells only the connection that deletes a record ([getpaseo/paseo#4870](https://github.com/getpaseo/paseo/issues/4870)), so the old record is archived first: every open Paseo window hears about that and closes the conversation's tab.
+- A conversation that is running or waiting for a permission answer does not move; try again when it has finished.
+- A moved conversation is added as the last tab. The workspaces involved stay in the folders they were in.
+- If an import fails, the conversation is put back where it was.
+
+The moves run in the plugin's server through Paseo's internal daemon client, at `PASEO_WS_URL` or the listen address in Paseo's `config.json`, so a Paseo update can break them. Pinning and renaming go through it too. The [scripts](#scripts-experimental) below make the same moves from a terminal.
 
 ## Suggestions file
 
-Default location: `<Paseo home>/paseo-folders/suggestions.json` (`~/.paseo` unless `PASEO_HOME` is set). You can set another path on the Folders screen.
+Another tool, such as a script that sorts your conversations, can propose folders and one-line notes per conversation in a JSON file. Default location: `<Paseo home>/paseo-folders/suggestions.json` (`~/.paseo` unless `PASEO_HOME` is set). You can set another path on the Folders screen.
 
 ```json
 {
@@ -70,54 +109,49 @@ Default location: `<Paseo home>/paseo-folders/suggestions.json` (`~/.paseo` unle
 
 The plugin imports when the app starts and every ten minutes. An import that changes nothing saves nothing.
 
-To read placements back, a script can read the plugin's settings document on the host: `<Paseo home>/plugin-settings/<installation id>/folders.json`. `values.workspaceAssignments` and `values.workspaceManual` hold the workspaces you placed by hand. `values.autoTitle` lists workspaces made from a folder that are still waiting for their first conversation's title or, while empty, to be archived. `values.removedFromRecent` holds when you removed workspaces from In progress (these fields keep its first name, Recent), `values.recentOrder` the order you dragged In progress into (empty for its own order), and `values.recentHeld` and `values.recentHeldAt` what In progress listed when you last removed a workspace from it, and when. `values.unsortedName` and `values.unsortedAt` hold the name you gave Unsorted (empty for the default) and how many folders come before it. `values.formerFolderNames` maps the old names of folders you renamed to their folder IDs, and `values.deletedFolderNames` lists the names of folders you deleted.
+To read placements back, a script can read the plugin's settings document on the host, `<Paseo home>/plugin-settings/paseo-folders/folders.json`. Under `values`:
 
-## Merge and split workspaces (experimental)
+| Field | Holds |
+| --- | --- |
+| `workspaceAssignments`, `workspaceManual` | The workspaces you placed by hand. |
+| `autoTitle` | Workspaces made from a folder that are still waiting for their first conversation's title or, while empty, to be archived. |
+| `removedFromRecent` | When you removed workspaces from In progress. The fields about In progress keep its first name, Recent. |
+| `recentOrder` | The order you dragged In progress into; empty for its own order. |
+| `recentHeld`, `recentHeldAt` | What In progress listed when you last removed a workspace from it, and when. |
+| `unsortedName`, `unsortedAt` | The name you gave Unsorted (empty for the default) and how many folders come before it. |
+| `formerFolderNames` | The old names of folders you renamed, mapped to their folder IDs. |
+| `deletedFolderNames` | The names of folders you deleted. |
 
-Paseo cannot yet move a tab from one workspace to another. The plugin does it for idle conversations:
+## Scripts (experimental)
 
-- Drag a workspace onto another workspace, or right-click it and choose **More** › **Merge into workspace** (workspaces in the same folder are listed first; type to search the rest).
-- Open a workspace's conversation list (the count and arrow on its row) and drag one conversation onto another workspace to move just that one, or right-click it and choose **More** › **Move into workspace**.
-- Drag a listed conversation onto a folder to give it a workspace of its own there, or right-click it and choose **More** › **Move to folder**. **Move to a new workspace** there (or **Split off a conversation** under its workspace's **More**) keeps it in the same folder.
+Two scripts move an idle conversation from a terminal, one at a time. They use Paseo's internal daemon client, the `paseo` CLI from `PATH` (or `PASEO_CLI`), and the daemon at `PASEO_WS_URL` (default `ws://127.0.0.1:6767/ws`).
 
-Moves within one project happen as soon as you let go. A move into another project opens a dialog first, naming both projects, because the conversation's commands and file changes happen in the new project from then on. Afterwards the workspace that received conversations opens, with its conversations listed. A workspace without a title of its own keeps the name it showed when you dropped on it, and a workspace named after a conversation (as a split names it) takes the name of the newest conversation left when that one moves out.
+### Split a conversation into its own workspace
 
-- Within one directory, Paseo archives the conversation and imports its session into the other workspace, reusing the same agent record: the conversation keeps its ID, history, title, mode and model.
-- Into a workspace of another directory (another project), only Claude conversations can move. Claude Code resumes a session by ID from any directory and keeps writing to the transcript where it started, so the history stays; the agent gets a new Paseo ID, and its title, labels, mode, model, thinking option, folder and note are carried over. Before the old record is deleted, a copy is saved under `<Paseo home>/paseo-folders/moves/`. Paseo tells only the connection that deletes a record ([getpaseo/paseo#4870](https://github.com/getpaseo/paseo/issues/4870)), so the old record is archived first: every open Paseo window hears about that and closes the conversation's tab.
-- A conversation that is running or waiting for a permission answer does not move; try again when it has finished.
-- A moved conversation is added as the last tab. The workspaces involved stay in the folders they were in.
-- If an import fails, the conversation is put back where it was.
-
-The moves run in the plugin's server through Paseo's internal daemon client, at `PASEO_WS_URL` or the listen address in Paseo's `config.json`, so a Paseo update can break them. The scripts below do the same from a terminal.
-
-## Split a conversation into its own workspace (experimental)
-
-Paseo cannot yet move a tab to another workspace. `scripts/split-agent.mjs` does it for an idle agent: it creates a local workspace in the agent's directory, archives the agent, and imports its provider session into the new workspace. Paseo reuses the same agent record, so the conversation, its ID and its history stay intact.
+`scripts/split-agent.mjs` creates a local workspace in the agent's directory, archives the agent, and imports its provider session into the new workspace. Paseo reuses the same agent record, so the conversation, its ID and its history stay intact. If the import fails, the agent stays archived and can be unarchived from History.
 
 ```bash
 node scripts/split-agent.mjs <agent-id> "<new workspace title>" --dry-run   # show what would move
 node scripts/split-agent.mjs <agent-id> "<new workspace title>"
 ```
 
-It uses Paseo's internal daemon client, the `paseo` CLI from `PATH` (or `PASEO_CLI`), and the daemon at `PASEO_WS_URL` (default `ws://127.0.0.1:6767/ws`). If the import fails, the agent stays archived and can be unarchived from History.
+### Move a conversation to another project
 
-## Move a conversation to another project (experimental)
-
-Paseo cannot change the directory a conversation runs in, so it cannot move one to another project. `scripts/move-agent.mjs` does it for an idle Claude agent: it creates a local workspace in the target directory, archives and deletes the agent's Paseo record and imports its Claude session there. Claude Code resumes a session by ID from any directory and keeps writing to the transcript where the session started, so the history stays and the conversation can go on. The agent gets a new Paseo ID; its title, labels, mode, model and thinking option are carried over, and so are its folder and note in Folders. If nothing else is left in the old workspace, it is archived and the new one takes its title and pin.
+Paseo cannot change the directory a conversation runs in, so it cannot move one to another project. `scripts/move-agent.mjs` does it for a Claude agent: it creates a local workspace in the target directory, archives and deletes the agent's Paseo record and imports its Claude session there. Claude Code resumes a session by ID from any directory and keeps writing to the transcript where the session started, so the history stays and the conversation can go on. The agent gets a new Paseo ID; its title, labels, mode, model and thinking option are carried over, and so are its folder and note in Folders. If nothing else is left in the old workspace, it is archived and the new one takes its title and pin.
 
 ```bash
 node scripts/move-agent.mjs <agent-id> <target-directory> --dry-run   # show what would move
 node scripts/move-agent.mjs <agent-id> <target-directory>
 ```
 
-Before deleting anything, the script saves the agent as Paseo returned it under `<Paseo home>/paseo-folders/moves/`. If the import fails, it imports the session back into the old workspace. As in the sidebar, archiving the record before deleting it makes open Paseo windows close the conversation's tab. One agent at a time: an agent that shares a workspace with others gets a workspace of its own. Loading the session can make Claude Code append its own bookkeeping lines to the transcript, and, if the session ended with background tasks still running, a notice that they stopped; no turn is run.
+Before deleting anything, the script saves the agent as Paseo returned it under `<Paseo home>/paseo-folders/moves/`. If the import fails, it imports the session back into the old workspace. As in the sidebar, archiving the record before deleting it makes open Paseo windows close the conversation's tab. An agent that shares a workspace with others gets a workspace of its own. Loading the session can make Claude Code append its own bookkeeping lines to the transcript, and, if the session ended with background tasks still running, a notice that they stopped; no turn is run.
 
-## Privacy
+## Data and privacy
 
-- No telemetry and no network requests of its own.
-- It reads only the suggestions file at the configured path.
-- To merge and split workspaces, its server connects to the Paseo daemon on your machine and writes a copy of each conversation that changes directories under `<Paseo home>/paseo-folders/moves/`.
-- Nothing is uploaded; folder data stays in Paseo's settings storage on your host.
+- No telemetry and no network requests of its own; nothing is uploaded.
+- Folder names, placements and notes are stored as Paseo plugin settings on your host, so every app connected to it shows the same folders. Removing the plugin deletes them.
+- Besides Paseo's `config.json`, for the daemon's address, it reads only the suggestions file at the configured path.
+- To pin, rename, merge and split, its server connects to the Paseo daemon on your machine. Before a conversation moves to another project, its Paseo record is saved under `<Paseo home>/paseo-folders/moves/`.
 
 ## Development
 

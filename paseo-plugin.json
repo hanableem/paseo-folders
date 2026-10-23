@@ -1,7 +1,7 @@
 {
   "id": "paseo-folders",
   "name": "Folders",
-  "description": "Group workspaces into folders in the sidebar. Drag workspaces between folders, merge workspaces, and move a conversation to another workspace.",
+  "description": "Group workspaces into folders in the sidebar, with the ones in progress on top. Drag workspaces between folders, merge workspaces, and move a conversation to another workspace.",
   "media": [],
   "requirements": {
     "paseo": ">=0.11.1"
